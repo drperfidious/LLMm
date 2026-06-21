@@ -26,22 +26,42 @@ function limitArg(value: unknown): number {
   return Math.max(1, Math.min(MAX_LIMIT, Math.floor(n)));
 }
 
-function isoArg(value: unknown, fallback: Date): string {
-  const raw = stringArg(value);
-  if (!raw) {
-    return fallback.toISOString();
-  }
-  const parsed = new Date(raw);
-  return Number.isFinite(parsed.getTime()) ? parsed.toISOString() : raw;
-}
-
-function optionalIsoArg(value: unknown): string | undefined {
+function parseDateArg(value: unknown): Date | undefined {
   const raw = stringArg(value);
   if (!raw) {
     return undefined;
   }
   const parsed = new Date(raw);
-  return Number.isFinite(parsed.getTime()) ? parsed.toISOString() : raw;
+  return Number.isFinite(parsed.getTime()) ? parsed : undefined;
+}
+
+function isoArg(value: unknown, fallback: Date): string {
+  return (parseDateArg(value) ?? fallback).toISOString();
+}
+
+function requiredIsoArg(value: unknown): string | undefined {
+  return parseDateArg(value)?.toISOString();
+}
+
+function optionalIsoArg(value: unknown): string | undefined {
+  return parseDateArg(value)?.toISOString();
+}
+
+function findEventWindow(args: Record<string, any>): {
+  start: string;
+  end: string;
+} {
+  const defaultStart = new Date();
+  const startDate = parseDateArg(args.start ?? args.startISO) ?? defaultStart;
+  const defaultEnd = new Date(
+    startDate.getTime() + DEFAULT_EVENT_WINDOW_DAYS * 24 * 60 * 60 * 1000,
+  );
+  const rawEnd = parseDateArg(args.end ?? args.endISO);
+  const endDate = !rawEnd || rawEnd <= startDate ? defaultEnd : rawEnd;
+  return {
+    start: startDate.toISOString(),
+    end: endDate.toISOString(),
+  };
 }
 
 function confirmationError(tool: string): TalentResult {
@@ -98,11 +118,7 @@ export class CalendarFindEventsEngine implements TalentEngine {
 
   async execute(args: Record<string, any>): Promise<TalentResult> {
     const query = stringArg(args.query);
-    const start = isoArg(args.start ?? args.startISO, new Date());
-    const end = isoArg(
-      args.end ?? args.endISO,
-      new Date(Date.now() + DEFAULT_EVENT_WINDOW_DAYS * 24 * 60 * 60 * 1000),
-    );
+    const {start, end} = findEventWindow(args);
     const limit = limitArg(args.limit);
 
     try {
@@ -134,21 +150,34 @@ export class CalendarFindEventsEngine implements TalentEngine {
       function: {
         name: this.name,
         description:
-          'Search the user’s Apple Calendar events on-device after permission. Use this for schedule questions; omit query to list upcoming events.',
+          'Search the user’s Apple Calendar events on-device after permission. Use this for schedule questions; omit query to list upcoming events. For ordinary upcoming-calendar requests, omit start and end instead of guessing dates; LLMm defaults to now through about two weeks out.',
         parameters: {
           type: 'object',
           properties: {
             query: {
               type: 'string',
-              description: 'Optional text to match in title, notes, or location.',
+              description:
+                'Optional text to match in title, notes, or location.',
             },
             start: {
               type: 'string',
-              description: 'ISO start date/time. Defaults to now.',
+              description:
+                'Optional ISO start date/time. Omit for upcoming events; do not use natural-language values.',
             },
             end: {
               type: 'string',
-              description: 'ISO end date/time. Defaults to about two weeks out.',
+              description:
+                'Optional ISO end date/time. Omit for upcoming events; do not use natural-language values.',
+            },
+            startISO: {
+              type: 'string',
+              description:
+                'Alias for start. Optional ISO date/time only; omit when unsure.',
+            },
+            endISO: {
+              type: 'string',
+              description:
+                'Alias for end. Optional ISO date/time only; omit when unsure.',
             },
             limit: {
               type: 'number',
@@ -170,28 +199,29 @@ export class CalendarCreateEventEngine implements TalentEngine {
     }
 
     const title = stringArg(args.title);
-    const start = stringArg(args.start);
-    const end = stringArg(args.end);
+    const start = requiredIsoArg(args.start ?? args.startISO);
+    const end = requiredIsoArg(args.end ?? args.endISO);
     if (!title) {
       return missingArg(this.name, 'title');
     }
     if (!start) {
-      return missingArg(this.name, 'start');
+      return missingArg(this.name, 'valid ISO start');
     }
     if (!end) {
-      return missingArg(this.name, 'end');
+      return missingArg(this.name, 'valid ISO end');
     }
 
     try {
       await nativeAppleOrganizer.requestCalendarAccess();
       const event = await nativeAppleOrganizer.createEvent({
         title,
-        start: isoArg(start, new Date()),
-        end: isoArg(end, new Date()),
+        start,
+        end,
         allDay: boolArg(args.all_day ?? args.allDay),
         location: stringArg(args.location) || undefined,
         notes: stringArg(args.notes) || undefined,
-        calendarTitle: stringArg(args.calendar_title ?? args.calendarTitle) || undefined,
+        calendarTitle:
+          stringArg(args.calendar_title ?? args.calendarTitle) || undefined,
       });
       return {
         type: 'text',
@@ -215,7 +245,10 @@ export class CalendarCreateEventEngine implements TalentEngine {
             title: {type: 'string', description: 'Event title.'},
             start: {type: 'string', description: 'ISO start date/time.'},
             end: {type: 'string', description: 'ISO end date/time.'},
-            all_day: {type: 'boolean', description: 'Whether the event is all-day.'},
+            all_day: {
+              type: 'boolean',
+              description: 'Whether the event is all-day.',
+            },
             location: {type: 'string', description: 'Optional event location.'},
             notes: {type: 'string', description: 'Optional event notes.'},
             calendar_title: {
@@ -317,7 +350,8 @@ export class ReminderCreateEngine implements TalentEngine {
         due: optionalIsoArg(args.due ?? args.due_date ?? args.dueDate),
         priority:
           args.priority === undefined ? undefined : Number(args.priority) || 0,
-        calendarTitle: stringArg(args.list_title ?? args.calendar_title) || undefined,
+        calendarTitle:
+          stringArg(args.list_title ?? args.calendar_title) || undefined,
       });
       return {
         type: 'text',

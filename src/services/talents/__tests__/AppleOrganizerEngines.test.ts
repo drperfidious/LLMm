@@ -36,6 +36,10 @@ describe('Apple organizer talent engines', () => {
     });
   });
 
+  afterEach(() => {
+    jest.useRealTimers();
+  });
+
   it('searches calendar events through the native bridge', async () => {
     native.findEvents.mockResolvedValue([
       {
@@ -66,6 +70,27 @@ describe('Apple organizer talent engines', () => {
     );
     expect(result.summary).toContain('Dentist');
     expect(result.summary).toContain('event-1');
+  });
+
+  it('falls back to upcoming window when calendar search dates are malformed', async () => {
+    jest.useFakeTimers().setSystemTime(new Date('2026-06-21T18:00:00Z'));
+    native.findEvents.mockResolvedValue([]);
+
+    const result = await new CalendarFindEventsEngine().execute({
+      query: '',
+      start: '2023-10-05T00:000000',
+      end: 'current date and time',
+      limit: 5,
+    });
+
+    expect(result.type).toBe('text');
+    expect(native.findEvents).toHaveBeenCalledWith(
+      '',
+      '2026-06-21T18:00:00.000Z',
+      '2026-07-05T18:00:00.000Z',
+      5,
+    );
+    expect(result.summary).toContain('no events found');
   });
 
   it('requires explicit confirmation before creating a calendar event', async () => {
@@ -106,6 +131,18 @@ describe('Apple organizer talent engines', () => {
       }),
     );
     expect(result.summary).toContain('event-2');
+  });
+
+  it('rejects invalid calendar create dates before native write', async () => {
+    const result = await new CalendarCreateEventEngine().execute({
+      title: 'Class',
+      start: 'current date and time',
+      end: 'later',
+      user_confirmed: true,
+    });
+
+    expect(result.type).toBe('error');
+    expect(native.createEvent).not.toHaveBeenCalled();
   });
 
   it('finds reminders through the native bridge', async () => {
