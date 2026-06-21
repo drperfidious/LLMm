@@ -23,8 +23,23 @@ export interface ToolDefinition {
   };
 }
 
+export type TalentSource = 'builtin' | 'custom' | 'agent' | 'installed';
+
+export interface TalentManifest {
+  name: string;
+  title: string;
+  description: string;
+  keywords?: string[];
+  source?: TalentSource;
+  category?: 'utility' | 'search' | 'communication' | 'visual' | 'management';
+  configurable?: boolean;
+  sideEffect?: boolean;
+  agentDefaultEnabled?: boolean;
+}
+
 export interface TalentEngine {
   readonly name: string;
+  readonly manifest?: TalentManifest;
   /**
    * Optional hint for the n_ctx this talent tends to need room for. Read only
    * by the pal-load hint and the heavy-talent banner sub-copy; never moves a

@@ -55,6 +55,10 @@ export type SupertonicDownloadState = NeuralDownloadState;
 export type NeuralEngineId = 'supertonic' | 'kokoro' | 'kitten';
 
 const DEFAULT_SUPERTONIC_STEPS: SupertonicSteps = 5;
+const SUPERTONIC_INFERENCE_ERROR_MESSAGE =
+  'Supertonic speech failed on this response. Auto-speak was turned off; choose a voice again to retry.';
+const SUPERTONIC_INFERENCE_ERROR_RE =
+  /(Supertonic|Inference|onnxruntime|BroadcastIterator|estimateVector|vector_estimator|vector_field|Mul node|Non-zero status code)/i;
 
 const previewMessageId = (voice: Voice): string =>
   `preview:${voice.engine}:${voice.id}`;
@@ -292,6 +296,9 @@ export class TTSStore {
 
   setCurrentVoice(v: Voice | null) {
     this.currentVoice = v;
+    if (v?.engine === 'supertonic') {
+      this.supertonicDownloadError = null;
+    }
   }
 
   setSupertonicSteps(steps: SupertonicSteps) {
@@ -360,6 +367,55 @@ export class TTSStore {
       return this.kokoroDownloadState;
     }
     return this.kittenDownloadState;
+  }
+
+  private isSupertonicInferenceError(err: unknown): boolean {
+    const message =
+      err instanceof Error
+        ? `${err.name}: ${err.message}\n${err.stack ?? ''}`
+        : String(err ?? '');
+    return (
+      SUPERTONIC_INFERENCE_ERROR_RE.test(message) &&
+      /(Inference|onnxruntime|BroadcastIterator|estimateVector|vector_estimator|vector_field|Mul node|Non-zero status code)/i.test(
+        message,
+      )
+    );
+  }
+
+  private async handlePlaybackFailure(
+    err: unknown,
+    voice: Voice | null | undefined,
+    source: string,
+  ): Promise<void> {
+    if (
+      voice?.engine !== 'supertonic' ||
+      !this.isSupertonicInferenceError(err)
+    ) {
+      return;
+    }
+
+    console.warn(
+      `[TTSStore] disabling Supertonic after ${source} inference failure:`,
+      err,
+    );
+    runInAction(() => {
+      if (this.currentVoice?.engine === 'supertonic') {
+        this.currentVoice = null;
+      }
+      this.autoSpeakEnabled = false;
+      this.playbackState = {mode: 'idle'};
+      this.supertonicDownloadError = SUPERTONIC_INFERENCE_ERROR_MESSAGE;
+    });
+    this.streamStripper = null;
+    this.streamPlaceholderEmitted = false;
+    try {
+      await ttsRuntime.release();
+    } catch (releaseErr) {
+      console.warn(
+        '[TTSStore] release after Supertonic failure failed:',
+        releaseErr,
+      );
+    }
   }
 
   /**
@@ -431,6 +487,7 @@ export class TTSStore {
       }
     } catch (err) {
       console.warn('[TTSStore] play failed:', err);
+      await this.handlePlaybackFailure(err, voice, 'play');
     } finally {
       runInAction(() => {
         if (
@@ -474,6 +531,7 @@ export class TTSStore {
       }
     } catch (err) {
       console.warn('[TTSStore] preview failed:', err);
+      await this.handlePlaybackFailure(err, voice, 'preview');
     } finally {
       runInAction(() => {
         if (
@@ -578,6 +636,7 @@ export class TTSStore {
   ) {
     const state = this.playbackState;
     if (state.mode === 'streaming' && state.messageId === messageId) {
+      const voice = this.currentVoice;
       const stripper = this.streamStripper;
       if (stripper != null) {
         const leftover = stripper.flush();
@@ -591,8 +650,9 @@ export class TTSStore {
       }
       state.handle
         .finalize()
-        .catch(err => {
+        .catch(async err => {
           console.warn('[TTSStore] finalize failed:', err);
+          await this.handlePlaybackFailure(err, voice, 'stream finalize');
         })
         .finally(() => {
           runInAction(() => {

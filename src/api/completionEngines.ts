@@ -8,6 +8,45 @@ import {
   CompletionStreamData,
 } from '../utils/completionTypes';
 
+const LOCAL_PARTIAL_CALLBACK_INTERVAL_MS = 80;
+
+function hasVisibleLocalOutput(
+  result: Awaited<ReturnType<LlamaContext['completion']>>,
+): boolean {
+  return (
+    !!result.text?.trim() ||
+    !!result.content?.trim() ||
+    !!result.reasoning_content?.trim() ||
+    (result.tool_calls?.length ?? 0) > 0
+  );
+}
+
+function assertUsableLocalCompletion(
+  result: Awaited<ReturnType<LlamaContext['completion']>>,
+): void {
+  if (hasVisibleLocalOutput(result) || result.interrupted) {
+    return;
+  }
+
+  const predicted = result.tokens_predicted;
+  const stoppedWord = Boolean((result as any).stopped_word);
+  const immediateStop =
+    typeof predicted === 'number' &&
+    predicted <= 1 &&
+    (result.stopped_eos === true || stoppedWord);
+  if (predicted === 0 || immediateStop) {
+    throw new Error(
+      [
+        'Local model returned an empty completion.',
+        `tokens_predicted=${predicted ?? 'unknown'}`,
+        `stopped_eos=${result.stopped_eos ?? false}`,
+        `stopped_word=${stoppedWord}`,
+        `context_full=${result.context_full ?? false}`,
+      ].join(' '),
+    );
+  }
+}
+
 /**
  * LocalCompletionEngine wraps LlamaContext conforming to the CompletionEngine interface.
  * Thin wrapper that delegates all calls 1:1 to the native context.
@@ -19,8 +58,14 @@ export class LocalCompletionEngine implements CompletionEngine {
     params: ApiCompletionParams,
     callback?: (data: CompletionStreamData) => void,
   ): Promise<CompletionResult> {
+    const localParams = callback
+      ? ({
+          ...params,
+          partial_callback_interval_ms: LOCAL_PARTIAL_CALLBACK_INTERVAL_MS,
+        } as ApiCompletionParams)
+      : params;
     const result = await this.context.completion(
-      params,
+      localParams,
       callback
         ? data => {
             callback({
@@ -33,6 +78,7 @@ export class LocalCompletionEngine implements CompletionEngine {
           }
         : undefined,
     );
+    assertUsableLocalCompletion(result);
     return {
       text: result.text,
       content: result.content,

@@ -13,8 +13,10 @@ import type {
   TokenDelta,
 } from './AgentRunner.types';
 import type {TalentResult} from '../talents/types';
+import {extractToolCallsFromCompletionResult} from './toolCallParser';
 
 const DEFAULT_MAX_TURNS = 5;
+const MAX_IDENTICAL_TOOL_EXECUTIONS = 1;
 
 /**
  * Bridge a synchronous-callback engine into an async iterator. The
@@ -97,26 +99,6 @@ function projectStreamChunk(data: CompletionStreamData): TokenDelta {
 }
 
 /**
- * Backfill stable synthetic ids onto raw tool calls. llama.rn sometimes
- * returns id=null; strict Jinja templates reject `tool_call_id: null`
- * in the next-turn tool response, so we synthesize deterministic ids
- * from a per-run seed + index. Same shape as the legacy hook used.
- */
-function normalizeToolCallIds(
-  raw: NonNullable<CompletionResult['tool_calls']>,
-  seed: number,
-): AgentToolCall[] {
-  return raw.map((tc, i) => ({
-    id: tc.id || `call_${seed}_${i}`,
-    type: 'function',
-    function: {
-      name: tc.function?.name ?? '',
-      arguments: tc.function?.arguments ?? '',
-    },
-  }));
-}
-
-/**
  * Execute one tool call and produce an `AgentToolOutcome`. Errors are
  * captured as `result.type === 'error'`; the outcome is always
  * produced (never thrown) so the loop stays driven by the iterator.
@@ -154,7 +136,21 @@ async function executeOne(
 
   let parsedArgs: Record<string, unknown> = {};
   try {
-    parsedArgs = JSON.parse(call.function?.arguments || '{}');
+    const parsed = JSON.parse(call.function?.arguments || '{}');
+    if (
+      typeof parsed !== 'object' ||
+      parsed === null ||
+      Array.isArray(parsed)
+    ) {
+      const summary = `Error: arguments for ${fnName} must be a JSON object`;
+      const result: TalentResult = {
+        type: 'error',
+        summary,
+        errorMessage: summary,
+      };
+      return {callId, toolName: fnName, result, responseContent: summary};
+    }
+    parsedArgs = parsed as Record<string, unknown>;
   } catch {
     const summary = `Error: invalid JSON arguments for ${fnName}`;
     const result: TalentResult = {
@@ -183,6 +179,26 @@ async function executeOne(
     };
     return {callId, toolName: fnName, result, responseContent: summary};
   }
+}
+
+function buildRepeatedToolCallOutcome(call: AgentToolCall): AgentToolOutcome {
+  const fnName = call.function?.name ?? '';
+  const summary = `Stopped repeated tool call "${fnName}" because identical arguments already ran once. Use the previous tool result to answer the user instead of calling the same tool again.`;
+  const result: TalentResult = {
+    type: 'error',
+    summary,
+    errorMessage: summary,
+  };
+  return {
+    callId: call.id,
+    toolName: fnName,
+    result,
+    responseContent: summary,
+  };
+}
+
+function getRepeatKey(call: AgentToolCall): string {
+  return `${call.function?.name ?? ''}\u0000${call.function?.arguments ?? ''}`;
 }
 
 /**
@@ -247,6 +263,7 @@ export async function* runAgent(
     talentLookup,
     triggerMarkers,
     messageId,
+    enableToolCalls = true,
     maxTurns = DEFAULT_MAX_TURNS,
     signal,
   } = options;
@@ -284,6 +301,7 @@ export async function* runAgent(
   // `never`).
   let lastResult: CompletionResult | null = null as CompletionResult | null;
   const callIdSeed = Date.now();
+  const identicalToolExecutions = new Map<string, number>();
 
   try {
     while (turn < maxTurns) {
@@ -389,13 +407,17 @@ export async function* runAgent(
       // Compute normalized tool calls BEFORE the step_finished yield so
       // the event payload can carry them. The hook's appendToolCall
       // writer lands them on step.toolCalls with ids that match the
-      // upcoming outcomes by construction.
+      // upcoming outcomes by construction. Native structured tool_calls
+      // win; if the engine only emitted model-family sentinel JSON in
+      // text, parse that strict structured shape as a fallback.
       const finishedResult = lastResult;
-      const rawToolCalls = finishedResult?.tool_calls ?? [];
       const callsWithoutMetrics =
-        rawToolCalls.length === 0
+        finishedResult === null || !enableToolCalls
           ? undefined
-          : normalizeToolCallIds(rawToolCalls, callIdSeed + turn);
+          : extractToolCallsFromCompletionResult(
+              finishedResult,
+              callIdSeed + turn,
+            );
       // Attach per-step generation metrics: tokens counted across the
       // streaming run and ms from first tool-call token to here. The
       // step total is replicated onto each call — for multi-tool steps
@@ -427,11 +449,13 @@ export async function* runAgent(
       const outcomes: AgentToolOutcome[] = [];
       for (const call of calls) {
         yield {type: 'tool_call_started', call};
-        const outcome = await executeOne(
-          call,
-          allowedTalentNames,
-          talentLookup,
-        );
+        const repeatKey = getRepeatKey(call);
+        const repeatCount = (identicalToolExecutions.get(repeatKey) ?? 0) + 1;
+        identicalToolExecutions.set(repeatKey, repeatCount);
+        const outcome =
+          repeatCount > MAX_IDENTICAL_TOOL_EXECUTIONS
+            ? buildRepeatedToolCallOutcome(call)
+            : await executeOne(call, allowedTalentNames, talentLookup);
         outcomes.push(outcome);
         yield {type: 'tool_call_finished', outcome};
       }

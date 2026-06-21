@@ -36,6 +36,16 @@ export const mockChatSessionStore = {
   activeSessionId: 'session-1',
   newChatCompletionSettings: mockDefaultCompletionSettings,
   newChatThinkingOverride: undefined as boolean | undefined,
+  chatMode: 'chat' as 'chat' | 'agent',
+  workspaceCwd: '/',
+  setChatMode: jest.fn((value: 'chat' | 'agent') => {
+    mockChatSessionStore.chatMode = value;
+  }),
+  setWorkspaceCwd: jest.fn((value: string) => {
+    mockChatSessionStore.workspaceCwd = value || '/';
+    return mockChatSessionStore.workspaceCwd;
+  }),
+  loadWorkspaceCwd: jest.fn().mockResolvedValue(undefined),
   isMigrating: false,
   migrationComplete: true,
   // Draft autosave

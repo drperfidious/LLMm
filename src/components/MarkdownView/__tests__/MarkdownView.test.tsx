@@ -1,5 +1,5 @@
 import React from 'react';
-import {ScrollView} from 'react-native';
+import {Linking, ScrollView} from 'react-native';
 
 // Use the project's custom render which mounts MarkdownProvider — required
 // because MarkdownView now relies on the ambient TRenderEngineProvider
@@ -110,6 +110,129 @@ describe('MarkdownView Component', () => {
     );
 
     expect(getByText(/console\.log/)).toBeTruthy();
+  });
+
+  it('renders common LLM markdown structures', () => {
+    const markdownText = [
+      '## Plan',
+      '- Parse **markdown**',
+      '- Preserve `inline code`',
+      '',
+      '> Keep formatting readable.',
+      '',
+      'Line one',
+      'Line two',
+    ].join('\n');
+    const {getByText} = render(
+      <MarkdownView markdownText={markdownText} maxMessageWidth={300} />,
+    );
+
+    expect(getByText('Plan')).toBeTruthy();
+    expect(getByText('markdown')).toBeTruthy();
+    expect(getByText(/inline code/)).toBeTruthy();
+    expect(getByText('Keep formatting readable.')).toBeTruthy();
+    expect(getByText(/Line one/)).toBeTruthy();
+    expect(getByText(/Line two/)).toBeTruthy();
+  });
+
+  it('renders inline math without markdown emphasis corruption', () => {
+    const {getByText, getAllByTestId, queryByText} = render(
+      <MarkdownView
+        markdownText="Use $E = mc^2$ and $a_i = b_i + c_i$."
+        maxMessageWidth={300}
+      />,
+    );
+
+    expect(getAllByTestId('markdown-inline-math')).toHaveLength(2);
+    expect(getByText('E = mc^2')).toBeTruthy();
+    expect(getByText('a_i = b_i + c_i')).toBeTruthy();
+    expect(queryByText('$E = mc^2$')).toBeNull();
+  });
+
+  it('renders display math as a dedicated block', () => {
+    const equation = '\\\\frac{1}{n} \\\\sum_{i=1}^{n} x_i';
+    const {getByText, getByTestId} = render(
+      <MarkdownView
+        markdownText={`Before\n\n$$\n${equation}\n$$\n\nAfter`}
+        maxMessageWidth={300}
+      />,
+    );
+
+    expect(getByTestId('markdown-block-math')).toBeTruthy();
+    expect(getByText(equation)).toBeTruthy();
+    expect(getByText('Before')).toBeTruthy();
+    expect(getByText('After')).toBeTruthy();
+  });
+
+  it('renders parenthesized LaTeX inline math delimiters', () => {
+    const {getByText, getByTestId, queryByText} = render(
+      <MarkdownView
+        markdownText={'The identity is \\(a^2 + b^2 = c^2\\).'}
+        maxMessageWidth={300}
+      />,
+    );
+
+    expect(getByTestId('markdown-inline-math')).toBeTruthy();
+    expect(getByText('a^2 + b^2 = c^2')).toBeTruthy();
+    expect(queryByText(/\\\(a\^2/)).toBeNull();
+  });
+
+  it('renders bracketed LaTeX display math delimiters', () => {
+    const equation = 'x = \\frac{-b \\pm \\sqrt{b^2 - 4ac}}{2a}';
+    const {getByText, getByTestId} = render(
+      <MarkdownView
+        markdownText={`Before\n\n\\[\n${equation}\n\\]\n\nAfter`}
+        maxMessageWidth={300}
+      />,
+    );
+
+    expect(getByTestId('markdown-block-math')).toBeTruthy();
+    expect(getByText(equation)).toBeTruthy();
+    expect(getByText('Before')).toBeTruthy();
+    expect(getByText('After')).toBeTruthy();
+  });
+
+  it('renders LaTeX equation environments as display math blocks', () => {
+    const equation = 'a &= b + c';
+    const {getByText, getByTestId} = render(
+      <MarkdownView
+        markdownText={`\\begin{align}\n${equation}\n\\end{align}`}
+        maxMessageWidth={300}
+      />,
+    );
+
+    expect(getByTestId('markdown-block-math')).toBeTruthy();
+    expect(getByText(equation)).toBeTruthy();
+  });
+
+  it('does not convert dollar signs inside code spans or code blocks', () => {
+    const {getByText, queryByTestId} = render(
+      <MarkdownView
+        markdownText={'Inline `$PATH` and fenced:\n\n```sh\necho "$HOME"\n```'}
+        maxMessageWidth={300}
+      />,
+    );
+
+    expect(queryByTestId('markdown-inline-math')).toBeNull();
+    expect(getByText(/\$PATH/)).toBeTruthy();
+    expect(getByText('echo "$HOME"')).toBeTruthy();
+  });
+
+  it('opens markdown links through the native linker', () => {
+    const openURL = jest
+      .spyOn(Linking, 'openURL')
+      .mockResolvedValue(undefined as never);
+    const {getByText} = render(
+      <MarkdownView
+        markdownText="[Docs](https://example.com/docs)"
+        maxMessageWidth={300}
+      />,
+    );
+
+    fireEvent.press(getByText('Docs'));
+
+    expect(openURL).toHaveBeenCalledWith('https://example.com/docs');
+    openURL.mockRestore();
   });
 
   describe('Table Rendering', () => {

@@ -37,7 +37,7 @@ import {
 } from '../../utils/pal-templates';
 
 // Services and stores
-import {authService, syncService} from '../../services';
+import {authService, palsHubService, syncService} from '../../services';
 import {palStore, Pal} from '../../store';
 import {hasVideoCapability} from '../../utils/pal-capabilities';
 
@@ -47,6 +47,7 @@ export const PalsScreen: React.FC = observer(() => {
   const theme = useTheme();
   const styles = createStyles(theme);
   const l10n = useContext(L10nContext);
+  const isPalsHubConfigured = palsHubService.isConfigured();
 
   // Navigation state
   const [activeAction, setActiveAction] = useState<BottomActionType>('search');
@@ -54,7 +55,9 @@ export const PalsScreen: React.FC = observer(() => {
 
   // Search state
   const [isSearchExpanded, setIsSearchExpanded] = useState(false);
-  const [searchResults, setSearchResults] = useState<PalsHubPal[]>([]);
+  const [searchResults, setSearchResults] = useState<Array<PalsHubPal | Pal>>(
+    [],
+  );
 
   // Sheet states
   const [showProfile, setShowProfile] = useState(false);
@@ -76,7 +79,7 @@ export const PalsScreen: React.FC = observer(() => {
     const runInitialSetup = async () => {
       try {
         // Start sync service if user is authenticated
-        if (authService.isAuthenticated) {
+        if (isPalsHubConfigured && authService.isAuthenticated) {
           const needsSync = await syncService.needsSync();
           if (needsSync) {
             console.log('Syncing with PalsHub...');
@@ -89,12 +92,31 @@ export const PalsScreen: React.FC = observer(() => {
     };
 
     runInitialSetup();
-  }, []);
+  }, [isPalsHubConfigured]);
+
+  const loadData = useCallback(async () => {
+    try {
+      if (!isPalsHubConfigured) {
+        return;
+      }
+
+      // Load public agents for browsing when the marketplace backend exists.
+      await palStore.searchPalsHubPals({sortBy: 'newest', limit: 20});
+      if (authService.isAuthenticated) {
+        await Promise.all([
+          palStore.loadUserLibrary(),
+          palStore.loadUserCreatedPals(),
+        ]);
+      }
+    } catch (error) {
+      console.error('Error loading data:', error);
+    }
+  }, [isPalsHubConfigured]);
 
   // Load initial data
   useEffect(() => {
     loadData();
-  }, []);
+  }, [loadData]);
 
   const handleCreatePal = (type: 'assistant' | 'roleplay' | 'video') => {
     let newPal: Partial<Pal>;
@@ -117,21 +139,6 @@ export const PalsScreen: React.FC = observer(() => {
     setShowPalSheet(true);
   };
 
-  const loadData = async () => {
-    try {
-      // Load public pals for browsing
-      await palStore.searchPalsHubPals({sortBy: 'newest', limit: 20});
-      if (authService.isAuthenticated) {
-        await Promise.all([
-          palStore.loadUserLibrary(),
-          palStore.loadUserCreatedPals(),
-        ]);
-      }
-    } catch (error) {
-      console.error('Error loading data:', error);
-    }
-  };
-
   const onRefresh = useCallback(async () => {
     setRefreshing(true);
     try {
@@ -141,7 +148,7 @@ export const PalsScreen: React.FC = observer(() => {
     } finally {
       setRefreshing(false);
     }
-  }, []);
+  }, [loadData]);
 
   const handleActionPress = (action: BottomActionType) => {
     setActiveAction(action);
@@ -151,6 +158,9 @@ export const PalsScreen: React.FC = observer(() => {
         setIsSearchExpanded(!isSearchExpanded);
         break;
       case 'profile':
+        if (!isPalsHubConfigured) {
+          return;
+        }
         if (authService.isAuthenticated) {
           setShowProfile(true);
         } else {
@@ -188,7 +198,7 @@ export const PalsScreen: React.FC = observer(() => {
 
     const localPals = palStore.getLocalPals();
     const downloadedPals = palStore.getDownloadedPalsHubPals();
-    const hubPals = palStore.cachedPalsHubPals;
+    const hubPals = isPalsHubConfigured ? palStore.cachedPalsHubPals : [];
 
     switch (activeFilter) {
       case 'my-pals':
@@ -228,7 +238,7 @@ export const PalsScreen: React.FC = observer(() => {
 
     const localPals = palStore.getLocalPals();
     const downloadedPals = palStore.getDownloadedPalsHubPals();
-    const hubPals = palStore.cachedPalsHubPals;
+    const hubPals = isPalsHubConfigured ? palStore.cachedPalsHubPals : [];
 
     switch (activeFilter) {
       case 'all': {
@@ -242,8 +252,8 @@ export const PalsScreen: React.FC = observer(() => {
             data: allLocalPals,
           });
         }
-        // if authenticated
-        if (authService.isAuthenticated) {
+        // if authenticated and the marketplace backend exists
+        if (isPalsHubConfigured && authService.isAuthenticated) {
           const allLibraryPals = [
             ...palStore.userLibrary,
             ...palStore.userCreatedPals,
@@ -278,8 +288,8 @@ export const PalsScreen: React.FC = observer(() => {
           });
         }
 
-        // if authenticated
-        if (authService.isAuthenticated) {
+        // if authenticated and the marketplace backend exists
+        if (isPalsHubConfigured && authService.isAuthenticated) {
           const allLibraryPals = [
             ...palStore.userLibrary,
             ...palStore.userCreatedPals,
@@ -347,8 +357,8 @@ export const PalsScreen: React.FC = observer(() => {
       <PlusIcon stroke={theme.colors.onSurfaceVariant} width={48} height={48} />
       <Text style={styles.emptyStateText}>
         {activeFilter === 'local' || activeFilter === 'my-pals'
-          ? 'No Pals yet.\nCreate your first Pal using the + button!'
-          : 'No Pals found.\nTry adjusting your filters or search.'}
+          ? 'No agents yet.\nCreate your first agent using the + button!'
+          : 'No agents found.\nTry adjusting your filters or search.'}
       </Text>
     </View>
   );
@@ -362,7 +372,7 @@ export const PalsScreen: React.FC = observer(() => {
   return (
     <View style={styles.container}>
       {/* Compact Auth Bar - Only for unauthenticated users and when not dismissed */}
-      {!authService.isAuthenticated && showAuthBar && (
+      {isPalsHubConfigured && !authService.isAuthenticated && showAuthBar && (
         <CompactAuthBar
           isAuthenticated={authService.isAuthenticated}
           onSignInPress={() => setShowAuth(true)}
@@ -376,6 +386,11 @@ export const PalsScreen: React.FC = observer(() => {
         isExpanded={isSearchExpanded}
         onToggle={() => setIsSearchExpanded(!isSearchExpanded)}
         onSearchResults={setSearchResults}
+        remoteEnabled={isPalsHubConfigured}
+        localSearchItems={[
+          ...palStore.getLocalPals(),
+          ...palStore.getDownloadedPalsHubPals(),
+        ]}
       />
 
       {/* Filter Chips */}
@@ -383,6 +398,7 @@ export const PalsScreen: React.FC = observer(() => {
         activeFilter={activeFilter}
         onFilterChange={setActiveFilter}
         isAuthenticated={authService.isAuthenticated}
+        remoteEnabled={isPalsHubConfigured}
       />
 
       {/* Main Content */}
@@ -430,6 +446,7 @@ export const PalsScreen: React.FC = observer(() => {
         onActionPress={handleActionPress}
         onCreatePal={handleCreatePal}
         isAuthenticated={authService.isAuthenticated}
+        showProfileAction={isPalsHubConfigured}
       />
 
       {/* Sheets */}

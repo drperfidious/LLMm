@@ -1,0 +1,135 @@
+diff --git a/node_modules/@pocketpalai/react-native-speech/lib/module/engines/StreamingChunker.js b/node_modules/@pocketpalai/react-native-speech/lib/module/engines/StreamingChunker.js
+index bc7c611..d7007c6 100644
+--- a/node_modules/@pocketpalai/react-native-speech/lib/module/engines/StreamingChunker.js
++++ b/node_modules/@pocketpalai/react-native-speech/lib/module/engines/StreamingChunker.js
+@@ -136,8 +136,14 @@ export class StreamingChunker {
+       }
+     }
+     if (lastGoodEnd === -1) {
++      if (this.buffer.length >= this.maxChunkSize) {
++        return this.extractHardChunk();
++      }
+       return null;
+     }
++    if (lastGoodEnd > this.maxChunkSize) {
++      return this.extractHardChunk();
++    }
+     const end = lastGoodEnd;
+     const text = this.buffer.slice(0, end);
+     if (text.trim().length === 0) {
+@@ -161,6 +167,9 @@ export class StreamingChunker {
+       this.buffer = '';
+       return null;
+     }
++    if (this.buffer.length > this.maxChunkSize) {
++      return this.extractHardChunk();
++    }
+     const chunk = {
+       text: this.buffer,
+       startIndex: this.absoluteOffset,
+@@ -170,6 +179,34 @@ export class StreamingChunker {
+     this.buffer = '';
+     return chunk;
+   }
++  extractHardChunk() {
++    const end = this.findHardChunkEnd();
++    const text = this.buffer.slice(0, end);
++    this.buffer = this.buffer.slice(end);
++    const startIndex = this.absoluteOffset;
++    this.absoluteOffset += end;
++    if (text.trim().length === 0) {
++      return null;
++    }
++    return {
++      text,
++      startIndex,
++      endIndex: this.absoluteOffset
++    };
++  }
++  findHardChunkEnd() {
++    const maxEnd = Math.min(this.maxChunkSize, this.buffer.length);
++    if (maxEnd >= this.buffer.length) {
++      return this.buffer.length;
++    }
++    const minEnd = Math.floor(maxEnd * 0.6);
++    for (let i = maxEnd - 1; i > minEnd; i--) {
++      if (/\s/.test(this.buffer[i])) {
++        return i + 1;
++      }
++    }
++    return maxEnd;
++  }
+ 
+   /**
+    * Wake the blocked consumer if one is waiting.
+diff --git a/node_modules/@pocketpalai/react-native-speech/src/engines/StreamingChunker.ts b/node_modules/@pocketpalai/react-native-speech/src/engines/StreamingChunker.ts
+index 54ab018..8a36fb6 100644
+--- a/node_modules/@pocketpalai/react-native-speech/src/engines/StreamingChunker.ts
++++ b/node_modules/@pocketpalai/react-native-speech/src/engines/StreamingChunker.ts
+@@ -145,9 +145,16 @@ export class StreamingChunker {
+     }
+ 
+     if (lastGoodEnd === -1) {
++      if (this.buffer.length >= this.maxChunkSize) {
++        return this.extractHardChunk();
++      }
+       return null;
+     }
+ 
++    if (lastGoodEnd > this.maxChunkSize) {
++      return this.extractHardChunk();
++    }
++
+     const end = lastGoodEnd;
+     const text = this.buffer.slice(0, end);
+     if (text.trim().length === 0) {
+@@ -172,6 +179,9 @@ export class StreamingChunker {
+       this.buffer = '';
+       return null;
+     }
++    if (this.buffer.length > this.maxChunkSize) {
++      return this.extractHardChunk();
++    }
+     const chunk: TextChunk = {
+       text: this.buffer,
+       startIndex: this.absoluteOffset,
+@@ -182,6 +192,39 @@ export class StreamingChunker {
+     return chunk;
+   }
+ 
++  private extractHardChunk(): TextChunk | null {
++    const end = this.findHardChunkEnd();
++    const text = this.buffer.slice(0, end);
++    this.buffer = this.buffer.slice(end);
++    const startIndex = this.absoluteOffset;
++    this.absoluteOffset += end;
++
++    if (text.trim().length === 0) {
++      return null;
++    }
++
++    return {
++      text,
++      startIndex,
++      endIndex: this.absoluteOffset,
++    };
++  }
++
++  private findHardChunkEnd(): number {
++    const maxEnd = Math.min(this.maxChunkSize, this.buffer.length);
++    if (maxEnd >= this.buffer.length) {
++      return this.buffer.length;
++    }
++
++    const minEnd = Math.floor(maxEnd * 0.6);
++    for (let i = maxEnd - 1; i > minEnd; i--) {
++      if (/\s/.test(this.buffer[i]!)) {
++        return i + 1;
++      }
++    }
++    return maxEnd;
++  }
++
+   /**
+    * Wake the blocked consumer if one is waiting.
+    */

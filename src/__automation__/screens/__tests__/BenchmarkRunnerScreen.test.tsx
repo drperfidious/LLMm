@@ -1,4 +1,5 @@
 import React from 'react';
+import {Platform} from 'react-native';
 import {act} from 'react-test-renderer';
 
 import {fireEvent, render, waitFor} from '../../../../jest/test-utils';
@@ -23,7 +24,10 @@ const {useRoute} = require('@react-navigation/native') as {
 
 // Mock RNFS at the module path the screen imports.
 jest.mock('@dr.pogodin/react-native-fs', () => ({
-  ExternalDirectoryPath: '/mock/external',
+  ExternalDirectoryPath: null,
+  DocumentDirectoryPath: '/mock/documents',
+  LibraryDirectoryPath: '/mock/library',
+  CachesDirectoryPath: '/mock/caches',
   exists: jest.fn().mockResolvedValue(true),
   readFile: jest.fn(),
   writeFile: jest.fn().mockResolvedValue(undefined),
@@ -40,6 +44,8 @@ jest.mock('../../../utils/deviceSelection', () => ({
 }));
 
 const {getDeviceOptions} = require('../../../utils/deviceSelection');
+const RNDeviceInfo = require('react-native-device-info').default;
+const NativeHardwareInfo = require('../../../specs/NativeHardwareInfo').default;
 
 // Mock the thread-count helper. The bench reads it ONCE at matrix start to
 // pick the device-appropriate `n_threads`, so a single fixed value is enough
@@ -92,14 +98,45 @@ const VALID_CONFIG: BenchConfig = {
 // Fresh mock LlamaContext for each `initLlama` resolution. Tests that need
 // to drive bench output configure the returned mock's `bench`. Release is
 // stubbed so the runner's per-cell finally exercises the release path.
-function makeMockContext(overrides?: {bench?: jest.Mock; release?: jest.Mock}) {
+function makeMockContext(overrides?: {
+  bench?: jest.Mock;
+  release?: jest.Mock;
+  completion?: jest.Mock;
+  stopCompletion?: jest.Mock;
+  clearCache?: jest.Mock;
+  gpu?: boolean;
+  devices?: string[];
+  reasonNoGPU?: string;
+  systemInfo?: string;
+}) {
   return {
+    gpu: overrides?.gpu ?? false,
+    devices: overrides?.devices ?? [],
+    reasonNoGPU: overrides?.reasonNoGPU ?? '',
+    systemInfo: overrides?.systemInfo ?? '',
     bench:
       overrides?.bench ??
       jest.fn().mockResolvedValue({
         speedPp: 12.5,
         speedTg: 4.5,
       }),
+    completion:
+      overrides?.completion ??
+      jest.fn().mockResolvedValue({
+        text: '42',
+        content: '42',
+        reasoning_content: '',
+        tool_calls: [],
+        chat_format: 0,
+        tokens_predicted: 1,
+        tokens_evaluated: 1,
+        draft_tokens: 0,
+        draft_tokens_accepted: 0,
+        truncated: false,
+      }),
+    stopCompletion:
+      overrides?.stopCompletion ?? jest.fn().mockResolvedValue(undefined),
+    clearCache: overrides?.clearCache ?? jest.fn().mockResolvedValue(undefined),
     release: overrides?.release ?? jest.fn().mockResolvedValue(undefined),
   };
 }
@@ -107,6 +144,7 @@ function makeMockContext(overrides?: {bench?: jest.Mock; release?: jest.Mock}) {
 describe('BenchmarkRunnerScreen', () => {
   beforeEach(() => {
     jest.clearAllMocks();
+    Platform.OS = 'ios';
     // Default useRoute → no autostart. Autostart tests override this.
     useRoute.mockReturnValue({
       key: 'bench',
@@ -121,6 +159,23 @@ describe('BenchmarkRunnerScreen', () => {
       {id: 'gpu', label: 'GPU (OpenCL)', devices: ['Adreno (TM) 840v2']},
     ]);
     getRecommendedThreadCount.mockResolvedValue(6);
+    RNDeviceInfo.getDeviceId.mockReturnValue('iPhone15,3');
+    RNDeviceInfo.getModel.mockReturnValue('iPhone 12');
+    RNDeviceInfo.getDevice.mockResolvedValue('iPhone');
+    RNDeviceInfo.getTotalMemory.mockReturnValue(6 * 1024 * 1024 * 1024);
+    NativeHardwareInfo.getMetalInfo.mockResolvedValue({
+      isSupported: true,
+      name: 'Mock Metal GPU',
+      currentAllocatedSize: 0,
+      recommendedMaxWorkingSetSize: 8 * 1024 * 1024 * 1024,
+      maxBufferLength: 8 * 1024 * 1024 * 1024,
+      maxThreadgroupMemoryLength: 32768,
+      hasUnifiedMemory: true,
+      supportsFamilyApple7: true,
+      supportsFamilyApple8: true,
+      supportsFamilyMetal3: true,
+      highestAppleFamily: 9,
+    });
   });
 
   describe('component', () => {
@@ -151,6 +206,32 @@ describe('BenchmarkRunnerScreen', () => {
       });
       expect(loader).toHaveBeenCalledTimes(1);
       expect(runner).toHaveBeenCalledTimes(1);
+    });
+
+    it('shows preparing status immediately while config is loading', async () => {
+      let resolveLoader: (value: BenchConfig) => void = () => {};
+      const loader = jest.fn(
+        () =>
+          new Promise<BenchConfig>(resolve => {
+            resolveLoader = resolve;
+          }),
+      );
+      const runner = jest.fn().mockResolvedValue(undefined);
+      const {getByTestId} = render(
+        <BenchmarkRunnerScreen __runner={runner} __loadConfig={loader} />,
+      );
+
+      fireEvent.press(getByTestId('bench-run-button'));
+
+      expect(getByTestId('bench-runner-screen-status').props.children).toBe(
+        'preparing:loading config',
+      );
+      expect(runner).not.toHaveBeenCalled();
+
+      await act(async () => {
+        resolveLoader(VALID_CONFIG);
+      });
+      await waitFor(() => expect(runner).toHaveBeenCalledTimes(1));
     });
 
     it('tapping run while running is a no-op (single-flight)', async () => {
@@ -202,21 +283,138 @@ describe('BenchmarkRunnerScreen', () => {
       ).toBe('idle');
     });
 
-    it('missing config file sets status error:bench-config-missing', async () => {
-      RNFS.exists.mockResolvedValueOnce(false);
-      const {getByTestId} = render(<BenchmarkRunnerScreen />);
+    it('renders the latest cell quality outcome without requiring cache scrolling', async () => {
+      const runner = jest.fn(async (_cfg, setStatus, setLastCell) => {
+        setLastCell({
+          cells: 17,
+          total: 74,
+          failed: 0,
+          skipped: 3,
+          latest: {
+            model_id: 'gemma-3-1b',
+            filename: 'Gemma-3-1B-Q4_K_M.gguf',
+            quant: 'q4_k_m',
+            requested_backend: 'gpu',
+            effective_backend: 'metal',
+            settings_fingerprint: 'cache_type_k=q8_0;cache_type_v=turbo4',
+            status: 'ok',
+            pp_avg: 812,
+            tg_avg: 18.5,
+            quality_score: 0.5,
+            quality_passed: false,
+            quality_capabilities: ['fit', 'chat-capable', 'format-capable'],
+            rank_score: 500830,
+          },
+        });
+        setStatus('complete');
+      });
+      const loader = jest.fn().mockResolvedValue(VALID_CONFIG);
+      const {getByTestId, getByText} = render(
+        <BenchmarkRunnerScreen __runner={runner} __loadConfig={loader} />,
+      );
+
       await act(async () => {
         fireEvent.press(getByTestId('bench-run-button'));
       });
+
       await waitFor(() => {
-        expect(
-          getByTestId('bench-runner-screen-status').props.accessibilityLabel,
-        ).toBe('error:bench-config-missing');
+        expect(getByTestId('bench-latest-cell')).toBeTruthy();
       });
+      expect(getByText('Gemma-3-1B-Q4_K_M')).toBeTruthy();
+      expect(getByText('quality fail 0.50')).toBeTruthy();
+      expect(
+        getByText('tiers: fit, chat-capable, format-capable'),
+      ).toBeTruthy();
+    });
+
+    it('missing config file writes the dynamic iOS fit ladder and runs it', async () => {
+      RNFS.exists
+        .mockResolvedValueOnce(false) // latest report hydration
+        .mockResolvedValueOnce(false); // bench-config.json
+      const runner = jest.fn().mockResolvedValue(undefined);
+      const {getByTestId} = render(<BenchmarkRunnerScreen __runner={runner} />);
+      await act(async () => {
+        fireEvent.press(getByTestId('bench-run-button'));
+      });
+
+      await waitFor(() => {
+        expect(runner).toHaveBeenCalledTimes(1);
+      });
+
+      expect(RNFS.writeFile).toHaveBeenCalledWith(
+        '/mock/documents/bench-config.json',
+        expect.stringContaining('"ios-fit-dynamic-ladder"'),
+        'utf8',
+      );
+      const writtenConfig = JSON.parse(RNFS.writeFile.mock.calls[0][1]);
+      expect(writtenConfig.suite.id).toBe('ios-fit-dynamic-ladder');
+      expect(writtenConfig.models.length).toBeGreaterThan(0);
+      expect(runner.mock.calls[0][0]).toEqual(writtenConfig);
+    });
+
+    it('keeps generated iOS fit configs that intentionally default to gpu', async () => {
+      const metalConfig: BenchConfig = {
+        ...VALID_CONFIG,
+        suite: {id: 'ios-fit-ladder'},
+        backends: ['gpu'],
+      };
+      RNFS.exists.mockResolvedValueOnce(true);
+      RNFS.readFile.mockResolvedValueOnce(JSON.stringify(metalConfig));
+      const runner = jest.fn().mockResolvedValue(undefined);
+      const {getByTestId} = render(<BenchmarkRunnerScreen __runner={runner} />);
+
+      await act(async () => {
+        fireEvent.press(getByTestId('bench-run-button'));
+      });
+
+      await waitFor(() => {
+        expect(runner).toHaveBeenCalledTimes(1);
+      });
+
+      expect(RNFS.writeFile).not.toHaveBeenCalled();
+      expect(runner.mock.calls[0][0].backends).toEqual(['gpu']);
+    });
+
+    it('refreshes stale in-app generated ios-fit-ladder configs', async () => {
+      const staleGeneratedConfig: BenchConfig = {
+        ...VALID_CONFIG,
+        suite: {
+          id: 'ios-fit-ladder',
+          target_device: {
+            notes: [
+              'Generated in-app when no pushed bench-config.json exists.',
+            ],
+          },
+        },
+      };
+      RNFS.exists
+        .mockResolvedValueOnce(false) // latest report hydration
+        .mockResolvedValueOnce(true); // bench-config.json
+      RNFS.readFile.mockResolvedValueOnce(JSON.stringify(staleGeneratedConfig));
+      const runner = jest.fn().mockResolvedValue(undefined);
+      const {getByTestId} = render(<BenchmarkRunnerScreen __runner={runner} />);
+
+      await act(async () => {
+        fireEvent.press(getByTestId('bench-run-button'));
+      });
+
+      await waitFor(() => {
+        expect(runner).toHaveBeenCalledTimes(1);
+      });
+
+      const writtenConfigCall = RNFS.writeFile.mock.calls.find(([filePath]) =>
+        String(filePath).endsWith('/bench-config.json'),
+      );
+      expect(writtenConfigCall).toBeTruthy();
+      const writtenConfig = JSON.parse(writtenConfigCall?.[1] as string);
+      expect(writtenConfig.suite.id).toBe('ios-fit-dynamic-ladder');
+      expect(runner.mock.calls[0][0]).toEqual(writtenConfig);
     });
 
     it('malformed config JSON sets status to error:<parse-msg>', async () => {
-      RNFS.exists.mockResolvedValueOnce(true);
+      RNFS.exists
+        .mockResolvedValueOnce(false) // latest report hydration
+        .mockResolvedValueOnce(true); // bench-config.json
       RNFS.readFile.mockResolvedValueOnce('this is not json {');
       const {getByTestId} = render(<BenchmarkRunnerScreen />);
       await act(async () => {
@@ -385,6 +583,51 @@ describe('BenchmarkRunnerScreen', () => {
       return remove;
     }
 
+    /** Helper: drive the listener to emit a canonical full-Metal-offload
+     * sequence so `deriveEffectiveBackend(logSignals)` returns 'metal'. */
+    function stubMetalLogs(): jest.Mock {
+      const remove = jest.fn();
+      (addNativeLogListener as jest.Mock).mockImplementation(
+        (cb: (level: string, text: string) => void) => {
+          cb(
+            'I',
+            'llama_model_load_from_file_impl: using device Metal (Apple A16 GPU) (0000) - 4096 MiB free',
+          );
+          cb('I', 'load_tensors:        Metal model buffer size = 1002.15 MiB');
+          cb('I', 'load_tensors: offloaded 28/28 layers to GPU');
+          return {remove};
+        },
+      );
+      return remove;
+    }
+
+    /** Helper: iOS CPU rows can still see Metal mapped-buffer artifacts in
+     * native logs when GPU devices were not hard-disabled. The runner must
+     * not classify that as GPU execution when the cell explicitly requested
+     * CPU and native reports no GPU context. */
+    function stubMetalMappedCpuArtifactLogs(): jest.Mock {
+      const remove = jest.fn();
+      (addNativeLogListener as jest.Mock).mockImplementation(
+        (cb: (level: string, text: string) => void) => {
+          cb(
+            'I',
+            'llama_model_load_from_file_impl: using device Metal (Apple A16 GPU) (0000) - 4096 MiB free',
+          );
+          cb(
+            'I',
+            'load_tensors:          CPU model buffer size =   400.00 MiB',
+          );
+          cb(
+            'I',
+            'load_tensors: Metal0_Mapped model buffer size =   600.00 MiB',
+          );
+          cb('I', 'load_tensors: offloaded 0/28 layers to GPU');
+          return {remove};
+        },
+      );
+      return remove;
+    }
+
     /** Helper: drive the listener to emit a CPU-only sequence (no GPU/HTP
      * markers) so `deriveEffectiveBackend` returns 'cpu'. */
     function stubCPULogs(): jest.Mock {
@@ -441,11 +684,53 @@ describe('BenchmarkRunnerScreen', () => {
       expect(modelStore.exitBenchmarkMode).toHaveBeenCalledTimes(1);
     });
 
+    it('writes a current_cell crash breadcrumb before clearing it after row append', async () => {
+      stubOpenCLLogs();
+      await runMatrix(VALID_CONFIG, setStatus, setLastCell);
+
+      const reportWrites = RNFS.writeFile.mock.calls
+        .filter(([path]) => String(path).includes('benchmark-report-'))
+        .map(([, body]) => JSON.parse(body));
+      const startedWrite = reportWrites.find(json => json.current_cell);
+      expect(startedWrite).toBeTruthy();
+      expect(startedWrite.current_cell).toMatchObject({
+        cell_index: 1,
+        total_cells: 1,
+        model_id: 'qwen3-1.7b',
+        quant: 'q4_0',
+        requested_backend: 'gpu',
+      });
+      expect(startedWrite.current_cell.tag).toContain(
+        '1/1:qwen3-1.7b/q4_0/gpu',
+      );
+      expect(startedWrite.runs).toHaveLength(0);
+
+      const finalWrite = reportWrites[reportWrites.length - 1];
+      expect(finalWrite.current_cell).toBeNull();
+      expect(finalWrite.last_started_cell).toMatchObject({
+        cell_index: 1,
+        total_cells: 1,
+        model_id: 'qwen3-1.7b',
+        quant: 'q4_0',
+        requested_backend: 'gpu',
+      });
+      expect(finalWrite.last_completed_cell).toMatchObject({
+        cell_index: 1,
+        total_cells: 1,
+        model_id: 'qwen3-1.7b',
+        quant: 'q4_0',
+        requested_backend: 'gpu',
+        status: 'ok',
+      });
+      expect(finalWrite.runs).toHaveLength(1);
+    });
+
     // -------------------------------------------------------------------------
     // initLlama is the SOLE native-load entrypoint (no modelStore.initContext)
     // -------------------------------------------------------------------------
 
     it('calls initLlama with composed params (devices + n_gpu_layers from backend slot, n_threads from getRecommendedThreadCount)', async () => {
+      Platform.OS = 'android';
       stubOpenCLLogs();
       getRecommendedThreadCount.mockResolvedValueOnce(8);
       await runMatrix(VALID_CONFIG, setStatus, setLastCell);
@@ -480,7 +765,7 @@ describe('BenchmarkRunnerScreen', () => {
       }
     });
 
-    it('cpu cell composes devices=["CPU"] + n_gpu_layers=0', async () => {
+    it('cpu cell composes devices=["CPU"] + n_gpu_layers=0 and disables iOS GPU devices', async () => {
       stubCPULogs();
       const cfg: BenchConfig = {...VALID_CONFIG, backends: ['cpu']};
       await runMatrix(cfg, setStatus, setLastCell);
@@ -489,6 +774,36 @@ describe('BenchmarkRunnerScreen', () => {
       // Pinned to 0 so ggml does not route layers through other registered
       // backends (verified on Snapdragon 8 Elite Gen 5).
       expect(paramsArg.n_gpu_layers).toBe(0);
+      expect(paramsArg.no_gpu_devices).toBe(true);
+    });
+
+    it('uses model-level backend overrides for CPU reference rows', async () => {
+      stubCPULogs();
+      const cfg: BenchConfig = {
+        ...VALID_CONFIG,
+        backends: ['gpu'],
+        models: VALID_CONFIG.models.map(model => ({
+          ...model,
+          backends: ['cpu'],
+        })),
+      };
+
+      await runMatrix(cfg, setStatus, setLastCell);
+
+      const [paramsArg] = (initLlama as jest.Mock).mock.calls[0];
+      expect(paramsArg).toMatchObject({
+        devices: ['CPU'],
+        n_gpu_layers: 0,
+        no_gpu_devices: true,
+      });
+      const lastWrite =
+        RNFS.writeFile.mock.calls[RNFS.writeFile.mock.calls.length - 1];
+      const json = JSON.parse(lastWrite[1]);
+      expect(json.runs[0]).toMatchObject({
+        requested_backend: 'cpu',
+        effective_backend: 'cpu',
+        status: 'ok',
+      });
     });
 
     it('hexagon cell composes devices=hexagon-option + n_gpu_layers=99', async () => {
@@ -604,6 +919,138 @@ describe('BenchmarkRunnerScreen', () => {
       });
     });
 
+    it('records status:ok when actual gpu backend is iOS Metal', async () => {
+      Platform.OS = 'ios';
+      stubMetalLogs();
+      getDeviceOptions.mockResolvedValueOnce([
+        {id: 'cpu', label: 'CPU', devices: ['CPU']},
+        {id: 'gpu', label: 'Metal', devices: ['Metal']},
+      ]);
+      await runMatrix(VALID_CONFIG, setStatus, setLastCell);
+      const [paramsArg] = (initLlama as jest.Mock).mock.calls[0];
+      expect(paramsArg).toMatchObject({
+        n_gpu_layers: 99,
+      });
+      expect(paramsArg.devices).toBeUndefined();
+      const lastWrite =
+        RNFS.writeFile.mock.calls[RNFS.writeFile.mock.calls.length - 1];
+      const json = JSON.parse(lastWrite[1]);
+      expect(json.runs[0]).toMatchObject({
+        status: 'ok',
+        requested_backend: 'gpu',
+        effective_backend: 'metal',
+      });
+      expect(json.runs[0].log_signals).toMatchObject({
+        metal_init: true,
+        metal_device_name: 'Apple A16 GPU',
+      });
+    });
+
+    it('skips stale turbo2 Metal benchmark cells on constrained A16 iPads before native init', async () => {
+      Platform.OS = 'ios';
+      RNDeviceInfo.getDeviceId.mockReturnValue('iPad15,7');
+      RNDeviceInfo.getModel.mockReturnValue('iPad');
+      RNDeviceInfo.getDevice.mockResolvedValue('iPad');
+      RNDeviceInfo.getTotalMemory.mockReturnValue(4 * 1024 * 1024 * 1024);
+
+      const cfg: BenchConfig = {
+        ...VALID_CONFIG,
+        base_params: {
+          cache_type_k: 'q8_0',
+          cache_type_v: 'turbo4',
+          use_mmap: true,
+        },
+        settings_axes: [{name: 'cache_type_v', values: ['turbo2']}],
+      };
+
+      await runMatrix(cfg, setStatus, setLastCell);
+
+      expect(initLlama).not.toHaveBeenCalled();
+      const report = RNFS.writeFile.mock.calls
+        .map(([, data]) => {
+          try {
+            return JSON.parse(data);
+          } catch {
+            return null;
+          }
+        })
+        .reverse()
+        .find(json => Array.isArray(json?.runs));
+      expect(report?.runs[0]).toMatchObject({
+        requested_backend: 'gpu',
+        status: 'skipped',
+        reason: 'unsafe-ios-turbo2-metal-profile',
+        settings_overrides: {cache_type_v: 'turbo2'},
+      });
+      expect(report?.runs[0].error).toContain(
+        'unsafe-ios-turbo2-metal-profile',
+      );
+      expect(
+        setStatus.mock.calls.some(([value]) =>
+          String(value).includes('unsafe-ios-turbo2-metal-profile'),
+        ),
+      ).toBe(true);
+    });
+
+    it('keeps an iOS CPU-requested row on cpu when logs include Metal mapped-buffer artifacts but native context has no GPU', async () => {
+      Platform.OS = 'ios';
+      stubMetalMappedCpuArtifactLogs();
+      (initLlama as jest.Mock).mockResolvedValueOnce(
+        makeMockContext({
+          gpu: false,
+          devices: ['CPU'],
+          reasonNoGPU: 'GPU devices disabled by user',
+        }),
+      );
+      const cfg: BenchConfig = {...VALID_CONFIG, backends: ['cpu']};
+      await runMatrix(cfg, setStatus, setLastCell);
+
+      const [paramsArg] = (initLlama as jest.Mock).mock.calls[0];
+      expect(paramsArg).toMatchObject({
+        devices: ['CPU'],
+        n_gpu_layers: 0,
+        no_gpu_devices: true,
+      });
+
+      const lastWrite =
+        RNFS.writeFile.mock.calls[RNFS.writeFile.mock.calls.length - 1];
+      const json = JSON.parse(lastWrite[1]);
+      expect(json.runs[0]).toMatchObject({
+        status: 'ok',
+        requested_backend: 'cpu',
+        effective_backend: 'cpu',
+        native_context: {
+          gpu: false,
+          devices: ['CPU'],
+          reasonNoGPU: 'GPU devices disabled by user',
+        },
+      });
+      expect(
+        json.runs[0].log_signals.memory_buffers.weights_mib,
+      ).toHaveProperty('Metal0_Mapped');
+    });
+
+    it('fails an iOS CPU-requested row if native still reports a GPU context', async () => {
+      Platform.OS = 'ios';
+      stubMetalMappedCpuArtifactLogs();
+      (initLlama as jest.Mock).mockResolvedValueOnce(
+        makeMockContext({
+          gpu: true,
+          devices: ['Apple A16 GPU'],
+        }),
+      );
+      const cfg: BenchConfig = {...VALID_CONFIG, backends: ['cpu']};
+      await runMatrix(cfg, setStatus, setLastCell);
+
+      const lastWrite =
+        RNFS.writeFile.mock.calls[RNFS.writeFile.mock.calls.length - 1];
+      const json = JSON.parse(lastWrite[1]);
+      expect(json.runs[0].status).toBe('failed');
+      expect(json.runs[0].error).toContain(
+        'backend-mismatch:cpu:cpu+metal-partial',
+      );
+    });
+
     it('hard-fails the cell with backend-mismatch:<requested>:<actual> when the actual backend is wrong', async () => {
       // Requested gpu, but native logs only report CPU — the merged
       // architecture must surface this as a failed row, NOT as `status:ok`
@@ -689,6 +1136,10 @@ describe('BenchmarkRunnerScreen', () => {
       const json = JSON.parse(lastWrite[1]);
       expect(json.runs[0].status).toBe('failed');
       expect(json.runs[0].error).toContain('null metric');
+      expect(json.runs[0].peak_memory_mb).toBeGreaterThan(0);
+      expect(json.runs[0].memory_peak).toMatchObject({
+        used_bytes: expect.any(Number),
+      });
     });
 
     it('forces status:failed when bench() resolves with speedTg undefined', async () => {
@@ -797,6 +1248,107 @@ describe('BenchmarkRunnerScreen', () => {
       (modelStore as any).downloadError = null;
     });
 
+    it('reuses one downloaded model across settings-axis cells even when it is not the best candidate', async () => {
+      stubMetalLogs();
+      const cfg: BenchConfig = {
+        ...VALID_CONFIG,
+        models: [
+          {
+            id: 'gemma-3-1b',
+            hfModelId: 'google/gemma-3-1b-it-GGUF',
+            quants: [
+              {quant: 'q4_0', filename: 'Gemma-3-1B-Q4_0.gguf', size: 11},
+              {
+                quant: 'q4_k_m',
+                filename: 'Gemma-3-1B-Q4_K_M.gguf',
+                size: 22,
+              },
+            ],
+          },
+        ],
+        settings_axes: [{name: 'cache_type_v', values: ['turbo4', 'turbo3']}],
+      };
+      const initialBest = {
+        model_id: 'gemma-3-1b',
+        hf_model_id: 'google/gemma-3-1b-it-GGUF',
+        model_store_id: 'google/gemma-3-1b-it-GGUF/Gemma-3-1B-Q4_0.gguf',
+        filename: 'Gemma-3-1B-Q4_0.gguf',
+        quant: 'q4_0',
+        requested_backend: 'gpu',
+        effective_backend: 'metal',
+        settings_fingerprint: 'cache_type_v=turbo4',
+        file_path: '/mock/path/Gemma-3-1B-Q4_0.gguf',
+        size_bytes: 11,
+        rank_score: 999999999,
+        quality_score: 1,
+        quality_passed: true,
+        pp_avg: 999,
+        tg_avg: 999,
+        peak_memory_mb: null,
+        promoted_at: '2026-06-19T00:00:00.000Z',
+      };
+      RNFS.readFile.mockImplementation(async (filePath: string) => {
+        if (String(filePath).includes('benchmark-best-candidate.json')) {
+          return JSON.stringify(initialBest);
+        }
+        if (String(filePath).includes('benchmark-result-cache.json')) {
+          return JSON.stringify({version: 1, updated_at: '', entries: []});
+        }
+        if (String(filePath).includes('benchmark-completed-cell-cache.json')) {
+          return JSON.stringify({version: 1, updated_at: '', entries: []});
+        }
+        return JSON.stringify(cfg);
+      });
+      (modelStore as any).models = [
+        {
+          id: 'google/gemma-3-1b-it-GGUF/Gemma-3-1B-Q4_0.gguf',
+          name: 'gemma q4_0',
+          filename: 'Gemma-3-1B-Q4_0.gguf',
+          size: 11,
+          isDownloaded: true,
+        },
+      ] as any;
+      (modelStore.downloadHFModel as jest.Mock).mockImplementation(
+        async (hfModel: any, modelFile: any) => {
+          (modelStore as any).models.push({
+            id: `${hfModel.id}/${modelFile.rfilename}`,
+            name: modelFile.rfilename,
+            filename: modelFile.rfilename,
+            size: modelFile.size,
+            isDownloaded: true,
+          });
+        },
+      );
+      (modelStore.deleteModel as jest.Mock).mockImplementation(
+        async (model: any) => {
+          model.isDownloaded = false;
+          (modelStore as any).models = (modelStore as any).models.filter(
+            (candidate: any) => candidate.id !== model.id,
+          );
+        },
+      );
+
+      await runMatrix(cfg, setStatus, setLastCell);
+
+      expect(modelStore.downloadHFModel).toHaveBeenCalledTimes(1);
+      expect(
+        (modelStore.downloadHFModel as jest.Mock).mock.calls[0][1],
+      ).toMatchObject({
+        rfilename: 'Gemma-3-1B-Q4_K_M.gguf',
+      });
+      expect(initLlama).toHaveBeenCalledTimes(4);
+      const currentDeletes = (modelStore.deleteModel as jest.Mock).mock.calls
+        .map(([model]) => model.id)
+        .filter((id: string) => id.includes('Gemma-3-1B-Q4_K_M.gguf'));
+      expect(currentDeletes).toHaveLength(1);
+      const lastWrite =
+        RNFS.writeFile.mock.calls[RNFS.writeFile.mock.calls.length - 1];
+      const json = JSON.parse(lastWrite[1]);
+      expect(json.runs).toHaveLength(4);
+      expect(json.storage.deleted_count).toBe(1);
+      expect(json.storage.last_deleted_count).toBe(1);
+    });
+
     // -------------------------------------------------------------------------
     // Report shape
     // -------------------------------------------------------------------------
@@ -823,6 +1375,116 @@ describe('BenchmarkRunnerScreen', () => {
       expect(json.settings_axes_used).toBeUndefined();
     });
 
+    it('preserves the best candidate and prunes benchmark losers as better cells promote', async () => {
+      stubOpenCLLogs();
+      const cfg: BenchConfig = {
+        ...VALID_CONFIG,
+        models: [
+          {
+            id: 'qwen3-1.7b',
+            hfModelId: 'bartowski/Qwen_Qwen3-1.7B-GGUF',
+            quants: [
+              {quant: 'q4_0', filename: 'Qwen_Qwen3-1.7B-Q4_0.gguf', size: 11},
+              {
+                quant: 'q4_k_m',
+                filename: 'Qwen_Qwen3-1.7B-Q4_K_M.gguf',
+                size: 22,
+              },
+            ],
+          },
+        ],
+      };
+      const initialBest = {
+        model_id: 'qwen3-1.7b',
+        hf_model_id: 'bartowski/Qwen_Qwen3-1.7B-GGUF',
+        model_store_id:
+          'bartowski/Qwen_Qwen3-1.7B-GGUF/Qwen_Qwen3-1.7B-Q4_0.gguf',
+        filename: 'Qwen_Qwen3-1.7B-Q4_0.gguf',
+        quant: 'q4_0',
+        requested_backend: 'gpu',
+        effective_backend: 'opencl',
+        settings_fingerprint: 'app-default',
+        file_path: '/mock/path/Qwen_Qwen3-1.7B-Q4_0.gguf',
+        size_bytes: 11,
+        rank_score: 1000,
+        quality_score: null,
+        quality_passed: null,
+        pp_avg: 10,
+        tg_avg: 1,
+        peak_memory_mb: null,
+        promoted_at: '2026-06-19T00:00:00.000Z',
+      };
+      RNFS.readFile.mockResolvedValueOnce(JSON.stringify(initialBest));
+      (modelStore as any).models = [
+        {
+          id: 'bartowski/Qwen_Qwen3-1.7B-GGUF/Qwen_Qwen3-1.7B-Q4_0.gguf',
+          name: 'qwen q4_0',
+          filename: 'Qwen_Qwen3-1.7B-Q4_0.gguf',
+          size: 11,
+          isDownloaded: true,
+        },
+        {
+          id: 'bartowski/Qwen_Qwen3-1.7B-GGUF/Qwen_Qwen3-1.7B-Q4_K_M.gguf',
+          name: 'qwen q4_k_m',
+          filename: 'Qwen_Qwen3-1.7B-Q4_K_M.gguf',
+          size: 22,
+          isDownloaded: true,
+        },
+      ] as any;
+      (modelStore.deleteModel as jest.Mock).mockImplementation(
+        async (model: any) => {
+          model.isDownloaded = false;
+        },
+      );
+      (modelStore.downloadHFModel as jest.Mock).mockImplementation(
+        async (hfModel: any, modelFile: any) => {
+          (modelStore as any).models.push({
+            id: `${hfModel.id}/${modelFile.rfilename}`,
+            name: modelFile.rfilename,
+            filename: modelFile.rfilename,
+            size: modelFile.size,
+            isDownloaded: true,
+          });
+        },
+      );
+      (initLlama as jest.Mock)
+        .mockImplementationOnce(() =>
+          makeMockContext({
+            bench: jest.fn().mockResolvedValue({speedPp: 10, speedTg: 1}),
+          }),
+        )
+        .mockImplementationOnce(() =>
+          makeMockContext({
+            bench: jest.fn().mockResolvedValue({speedPp: 20, speedTg: 9}),
+          }),
+        );
+
+      await runMatrix(cfg, setStatus, setLastCell);
+
+      const deletedIds = (modelStore.deleteModel as jest.Mock).mock.calls.map(
+        ([model]) => model.id,
+      );
+      expect(deletedIds).toContain(
+        'bartowski/Qwen_Qwen3-1.7B-GGUF/Qwen_Qwen3-1.7B-Q4_K_M.gguf',
+      );
+      expect(deletedIds).toContain(
+        'bartowski/Qwen_Qwen3-1.7B-GGUF/Qwen_Qwen3-1.7B-Q4_0.gguf',
+      );
+      const bestWrites = RNFS.writeFile.mock.calls.filter(([filePath]) =>
+        String(filePath).includes('benchmark-best-candidate.json'),
+      );
+      const bestWrite = bestWrites[bestWrites.length - 1];
+      expect(JSON.parse(bestWrite?.[1] as string)).toMatchObject({
+        filename: 'Qwen_Qwen3-1.7B-Q4_K_M.gguf',
+        tg_avg: 9,
+      });
+      const lastWrite =
+        RNFS.writeFile.mock.calls[RNFS.writeFile.mock.calls.length - 1];
+      const json = JSON.parse(lastWrite[1]);
+      expect(json.best_candidate.filename).toBe('Qwen_Qwen3-1.7B-Q4_K_M.gguf');
+      expect(json.leaderboard[0].filename).toBe('Qwen_Qwen3-1.7B-Q4_K_M.gguf');
+    });
+
     it('echoes settings_axes_used in the report when axes are present', async () => {
       stubOpenCLLogs();
       const cfg: BenchConfig = {
@@ -836,6 +1498,244 @@ describe('BenchmarkRunnerScreen', () => {
       expect(json.settings_axes_used).toEqual([
         {name: 'cache_type_k', values: ['f16', 'q8_0']},
       ]);
+    });
+
+    it('records runtime device profile, base params, memory samples, and quality results', async () => {
+      stubOpenCLLogs();
+      const cfg: BenchConfig = {
+        ...VALID_CONFIG,
+        suite: {
+          id: 'ios-fit-smoke',
+          selection: {mode: 'promote_best', min_quality_score: 1},
+        },
+        base_params: {n_ctx: 4096, use_mmap: true},
+        quality_tasks: [{id: 'reasoning-42', kind: 'reasoning'}],
+      };
+      await runMatrix(cfg, setStatus, setLastCell);
+      const lastWrite =
+        RNFS.writeFile.mock.calls[RNFS.writeFile.mock.calls.length - 1];
+      const json = JSON.parse(lastWrite[1]);
+      expect(json.suite.id).toBe('ios-fit-smoke');
+      expect(json.device_profile).toMatchObject({
+        platform: 'ios',
+        model: 'iPhone 12',
+        total_memory_bytes: expect.any(Number),
+      });
+      expect(json.base_params_used).toMatchObject({
+        n_ctx: 4096,
+        use_mmap: true,
+      });
+      expect(json.quality_tasks_used).toEqual([
+        {id: 'reasoning-42', kind: 'reasoning'},
+      ]);
+      expect(json.runs[0]).toMatchObject({
+        quality_score: 1,
+        quality_passed: true,
+        quality_capabilities: ['fit', 'chat-capable', 'baseline-eligible'],
+        memory_before: expect.any(Object),
+        memory_after: expect.any(Object),
+        memory_peak: expect.any(Object),
+      });
+      expect(json.runs[0].quality_results).toHaveLength(1);
+      expect(json.runs[0].memory_snapshots.pre_init.label).toContain(
+        'pre-init',
+      );
+      const [paramsArg] = (initLlama as jest.Mock).mock.calls[0];
+      expect(paramsArg.n_ctx).toBe(4096);
+      expect(paramsArg.use_mmap).toBe(true);
+    });
+
+    it('passes resolved model stop words into benchmark quality completions', async () => {
+      stubOpenCLLogs();
+      (modelStore.models[0] as any).stopWords = ['<|end|>', '<|assistant|>'];
+      (modelStore.models[0] as any).defaultStopWords = ['</s>'];
+      const completion = jest.fn().mockResolvedValue({
+        text: '42',
+        content: '42',
+        reasoning_content: '',
+        tool_calls: [],
+        chat_format: 0,
+        tokens_predicted: 1,
+        tokens_evaluated: 1,
+        draft_tokens: 0,
+        draft_tokens_accepted: 0,
+        truncated: false,
+      });
+      (initLlama as jest.Mock).mockResolvedValueOnce(
+        makeMockContext({completion}),
+      );
+      const cfg: BenchConfig = {
+        ...VALID_CONFIG,
+        quality_tasks: [{id: 'reasoning-42', kind: 'reasoning'}],
+      };
+
+      await runMatrix(cfg, setStatus, setLastCell);
+
+      expect(completion).toHaveBeenCalledTimes(1);
+      expect(completion.mock.calls[0][0].stop).toEqual([
+        '<|end|>',
+        '<|assistant|>',
+      ]);
+    });
+
+    it('ranks and preserves throughput rows even when quality fails', async () => {
+      stubOpenCLLogs();
+      const cfg: BenchConfig = {
+        ...VALID_CONFIG,
+        suite: {
+          id: 'ios-fit-smoke',
+          selection: {mode: 'promote_best', min_quality_score: 1},
+        },
+        quality_tasks: [{id: 'reasoning-42', kind: 'reasoning'}],
+      };
+      (initLlama as jest.Mock).mockResolvedValueOnce(
+        makeMockContext({
+          bench: jest.fn().mockResolvedValue({speedPp: 100, speedTg: 10}),
+          completion: jest.fn().mockResolvedValue({
+            text: 'not the answer',
+            content: 'not the answer',
+            reasoning_content: '',
+            tool_calls: [],
+            chat_format: 0,
+            tokens_predicted: 3,
+            tokens_evaluated: 8,
+            draft_tokens: 0,
+            draft_tokens_accepted: 0,
+            truncated: false,
+          }),
+        }),
+      );
+
+      await runMatrix(cfg, setStatus, setLastCell);
+
+      const lastWrite =
+        RNFS.writeFile.mock.calls[RNFS.writeFile.mock.calls.length - 1];
+      const json = JSON.parse(lastWrite[1]);
+      expect(json.runs[0]).toMatchObject({
+        status: 'ok',
+        quality_score: 0,
+        quality_passed: false,
+      });
+      expect(json.best_candidate).toMatchObject({
+        filename: 'Qwen_Qwen3-1.7B-Q4_0.gguf',
+        quality_score: 0,
+        quality_passed: false,
+        pp_avg: 100,
+        tg_avg: 10,
+      });
+      expect(json.leaderboard[0]).toMatchObject({
+        filename: 'Qwen_Qwen3-1.7B-Q4_0.gguf',
+        quality_passed: false,
+      });
+      expect(json.storage.kept_filename).toBe('Qwen_Qwen3-1.7B-Q4_0.gguf');
+    });
+
+    it('persists quality-failed throughput rows in the result cache', async () => {
+      stubOpenCLLogs();
+      const cfg: BenchConfig = {
+        ...VALID_CONFIG,
+        quality_tasks: [{id: 'reasoning-42', kind: 'reasoning'}],
+      };
+      (initLlama as jest.Mock).mockResolvedValueOnce(
+        makeMockContext({
+          completion: jest.fn().mockResolvedValue({
+            text: 'not the answer',
+            content: 'not the answer',
+            reasoning_content: '',
+            tool_calls: [],
+            chat_format: 0,
+            tokens_predicted: 3,
+            tokens_evaluated: 8,
+            draft_tokens: 0,
+            draft_tokens_accepted: 0,
+            truncated: false,
+          }),
+        }),
+      );
+
+      await runMatrix(cfg, setStatus, setLastCell);
+
+      const cacheWrite = RNFS.writeFile.mock.calls.find(([filePath]) =>
+        String(filePath).includes('benchmark-result-cache.json'),
+      );
+      expect(cacheWrite).toBeTruthy();
+      const cache = JSON.parse(cacheWrite?.[1] as string);
+      expect(cache.entries).toHaveLength(1);
+      expect(cache.entries[0]).toMatchObject({
+        outcome: 'quality_failed',
+        model_id: 'qwen3-1.7b',
+        quant: 'q4_0',
+        filename: 'Qwen_Qwen3-1.7B-Q4_0.gguf',
+        requested_backend: 'gpu',
+        settings_fingerprint: APP_DEFAULT_FINGERPRINT,
+        quality_score: 0,
+        failed_task_ids: ['reasoning-42'],
+      });
+    });
+
+    it('skips a repeated cached quality failure without loading the model', async () => {
+      stubOpenCLLogs();
+      const cfg: BenchConfig = {
+        ...VALID_CONFIG,
+        quality_tasks: [{id: 'reasoning-42', kind: 'reasoning'}],
+      };
+      (initLlama as jest.Mock).mockResolvedValueOnce(
+        makeMockContext({
+          completion: jest.fn().mockResolvedValue({
+            text: 'not the answer',
+            content: 'not the answer',
+            reasoning_content: '',
+            tool_calls: [],
+            chat_format: 0,
+            tokens_predicted: 3,
+            tokens_evaluated: 8,
+            draft_tokens: 0,
+            draft_tokens_accepted: 0,
+            truncated: false,
+          }),
+        }),
+      );
+      await runMatrix(cfg, setStatus, setLastCell);
+      const cacheWrite = RNFS.writeFile.mock.calls.find(([filePath]) =>
+        String(filePath).includes('benchmark-result-cache.json'),
+      );
+      const cache = JSON.parse(cacheWrite?.[1] as string);
+
+      RNFS.writeFile.mockClear();
+      setStatus.mockClear();
+      setLastCell.mockClear();
+      (initLlama as jest.Mock).mockClear();
+      RNFS.readFile.mockImplementation(async (filePath: string) => {
+        if (String(filePath).includes('benchmark-result-cache.json')) {
+          return JSON.stringify(cache);
+        }
+        if (String(filePath).includes('benchmark-best-candidate.json')) {
+          return JSON.stringify({});
+        }
+        return JSON.stringify(VALID_CONFIG);
+      });
+
+      await runMatrix(cfg, setStatus, setLastCell);
+
+      expect(initLlama).not.toHaveBeenCalled();
+      const lastWrite =
+        RNFS.writeFile.mock.calls[RNFS.writeFile.mock.calls.length - 1];
+      const json = JSON.parse(lastWrite[1]);
+      expect(json.runs).toHaveLength(1);
+      expect(json.runs[0]).toMatchObject({
+        status: 'skipped',
+        reason: 'cached-quality-failure',
+        quality_score: 0,
+        quality_passed: false,
+      });
+      expect(json.result_cache.skipped_quality_failures).toBe(1);
+      const skippedStatus = setStatus.mock.calls
+        .map(call => call[0])
+        .find((value: string) => value.startsWith('skipped:'));
+      expect(skippedStatus).toContain('cached-quality-failure');
+      const live = setLastCell.mock.calls[setLastCell.mock.calls.length - 1][0];
+      expect(live.skipped).toBe(1);
+      expect(live.cache.skipped_quality_failures).toBe(1);
     });
 
     it('echoes inter_cell_settle_ms (custom) in the report top level', async () => {
@@ -903,6 +1803,50 @@ describe('BenchmarkRunnerScreen', () => {
       expect(json.runs).toHaveLength(2);
       expect(json.runs[0].settings_overrides).toEqual({cache_type_k: 'f16'});
       expect(json.runs[1].settings_overrides).toEqual({cache_type_k: 'q8_0'});
+    });
+
+    it('expands context variants without mixing cache keys or init params', async () => {
+      stubOpenCLLogs();
+      const cfg: BenchConfig = {
+        ...VALID_CONFIG,
+        context_variants: [
+          {id: 'baseline', label: 'baseline'},
+          {
+            id: 'mtp-n3',
+            label: 'MTP draft n=3',
+            init_params: {
+              speculative: {type: 'draft-mtp', n_max: 3},
+              spec_draft_n_max: 3,
+            },
+          },
+        ],
+      };
+      await runMatrix(cfg, setStatus, setLastCell);
+      expect(initLlama).toHaveBeenCalledTimes(2);
+      expect(
+        (initLlama as jest.Mock).mock.calls[0][0].speculative,
+      ).toBeUndefined();
+      expect((initLlama as jest.Mock).mock.calls[1][0]).toMatchObject({
+        speculative: {type: 'draft-mtp', n_max: 3},
+        spec_draft_n_max: 3,
+      });
+
+      const lastWrite =
+        RNFS.writeFile.mock.calls[RNFS.writeFile.mock.calls.length - 1];
+      const json = JSON.parse(lastWrite[1]);
+      expect(json.runs).toHaveLength(2);
+      expect(json.runs.map((row: any) => row.context_variant_id)).toEqual([
+        'baseline',
+        'mtp-n3',
+      ]);
+      expect(json.runs[1].context_variant_params).toMatchObject({
+        speculative: {type: 'draft-mtp', n_max: 3},
+      });
+      expect(
+        setStatus.mock.calls
+          .map(call => call[0])
+          .some((s: string) => s.includes('ctx=mtp-n3')),
+      ).toBe(true);
     });
 
     // -------------------------------------------------------------------------

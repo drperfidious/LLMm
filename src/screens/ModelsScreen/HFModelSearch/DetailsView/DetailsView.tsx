@@ -3,6 +3,7 @@ import {View} from 'react-native';
 
 import {Text, Chip, Tooltip} from 'react-native-paper';
 import {BottomSheetFlatList} from '@gorhom/bottom-sheet';
+import {observer} from 'mobx-react-lite';
 
 import {ModelTypeTag, Sheet} from '../../../../components';
 
@@ -20,12 +21,13 @@ import {
   isVisionRepo,
   getLLMFiles,
 } from '../../../../utils';
+import {modelStore} from '../../../../store';
 
 interface DetailsViewProps {
   hfModel: HuggingFaceModel;
 }
 
-export const DetailsView = ({hfModel}: DetailsViewProps) => {
+export const DetailsView = observer(({hfModel}: DetailsViewProps) => {
   const theme = useTheme();
   const styles = createStyles(theme);
   const l10n = useContext(L10nContext);
@@ -107,6 +109,7 @@ export const DetailsView = ({hfModel}: DetailsViewProps) => {
       </View>
       <BottomSheetFlatList
         data={llmFiles}
+        extraData={modelStore.downloadRevision}
         keyExtractor={(item: ModelFile) => item.rfilename}
         renderItem={renderItem}
         renderScrollComponent={props => (
@@ -118,4 +121,4 @@ export const DetailsView = ({hfModel}: DetailsViewProps) => {
       we should add them to the model card like in a dropdown form.*/}
     </View>
   );
-};
+});

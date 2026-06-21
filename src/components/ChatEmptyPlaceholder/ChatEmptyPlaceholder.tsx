@@ -55,7 +55,7 @@ export const ChatEmptyPlaceholder = observer(
       <View
         style={[styles.container, {marginBottom: bottomComponentHeight + 100}]}>
         <Image
-          source={require('../../assets/pocketpal-dark-v2.png')}
+          source={require('../../assets/llmm-app-icon.png')}
           style={styles.logo}
           resizeMode="contain"
         />

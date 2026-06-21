@@ -28,6 +28,19 @@ export const createStyles = (theme: Theme) =>
     button: {
       marginVertical: 6,
     },
+    fitBenchmarkPanel: {
+      backgroundColor: theme.colors.surfaceVariant,
+      borderRadius: 8,
+      padding: 12,
+      marginBottom: 16,
+      gap: 8,
+    },
+    fitBenchmarkTitle: {
+      color: theme.colors.onSurface,
+    },
+    fitBenchmarkDescription: {
+      color: theme.colors.onSurfaceVariant,
+    },
     loadingContainer: {
       alignItems: 'center',
       marginVertical: 8,

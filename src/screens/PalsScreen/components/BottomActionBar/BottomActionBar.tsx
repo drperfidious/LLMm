@@ -20,6 +20,7 @@ interface BottomActionBarProps {
   onActionPress: (action: BottomActionType) => void;
   onCreatePal: (type: 'assistant' | 'roleplay' | 'video') => void;
   isAuthenticated: boolean;
+  showProfileAction?: boolean;
 }
 
 interface ActionButtonProps {
@@ -34,6 +35,7 @@ const ActionButton: React.FC<ActionButtonProps> = ({
   action,
   label,
   icon,
+  isActive,
   onPress,
 }) => {
   const theme = useTheme();
@@ -42,7 +44,7 @@ const ActionButton: React.FC<ActionButtonProps> = ({
 
   return (
     <TouchableOpacity
-      style={styles.actionButton}
+      style={[styles.actionButton, isActive && styles.actionButtonActive]}
       onPress={onPress}
       testID={`bottom-action-${action}`}>
       <View style={styles.iconContainer}>{icon}</View>
@@ -52,7 +54,13 @@ const ActionButton: React.FC<ActionButtonProps> = ({
 };
 
 export const BottomActionBar: React.FC<BottomActionBarProps> = observer(
-  ({onActionPress, onCreatePal, isAuthenticated}) => {
+  ({
+    activeAction,
+    onActionPress,
+    onCreatePal,
+    isAuthenticated,
+    showProfileAction = true,
+  }) => {
     const theme = useTheme();
     const insets = useSafeAreaInsets();
     const styles = createStyles(theme, insets);
@@ -75,29 +83,32 @@ export const BottomActionBar: React.FC<BottomActionBarProps> = observer(
                 height={iconSize}
               />
             }
-            isActive={false}
+            isActive={activeAction === 'search'}
             onPress={() => onActionPress('search')}
           />
 
           {/* Add Pal Menu */}
-          <AddPalMenu
-            iconColor={iconColor}
-            iconSize={iconSize}
-            onCreatePal={onCreatePal}
-          />
+          <View style={styles.actionSlot}>
+            <AddPalMenu
+              iconColor={iconColor}
+              iconSize={iconSize}
+              onCreatePal={onCreatePal}
+            />
+          </View>
 
-          {/* Profile */}
-          <ActionButton
-            action="profile"
-            label={
-              isAuthenticated ? l10n.palsScreen.profile : l10n.palsScreen.signIn
-            }
-            icon={
-              <UserIcon stroke={iconColor} width={iconSize} height={iconSize} />
-            }
-            isActive={false}
-            onPress={() => onActionPress('profile')}
-          />
+          {showProfileAction && (
+            <ActionButton
+              action="profile"
+              label={
+                isAuthenticated ? l10n.palsScreen.profile : l10n.palsScreen.signIn
+              }
+              icon={
+                <UserIcon stroke={iconColor} width={iconSize} height={iconSize} />
+              }
+              isActive={activeAction === 'profile'}
+              onPress={() => onActionPress('profile')}
+            />
+          )}
         </View>
       </View>
     );

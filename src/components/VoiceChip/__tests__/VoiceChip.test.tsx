@@ -16,6 +16,13 @@ const renderChip = () =>
     </L10nContext.Provider>,
   );
 
+const renderCompactChip = () =>
+  render(
+    <L10nContext.Provider value={l10n.en}>
+      <VoiceChip compact />
+    </L10nContext.Provider>,
+  );
+
 const systemVoice = {
   id: 'v1',
   name: 'Alexandra',
@@ -60,6 +67,16 @@ describe('VoiceChip', () => {
     const {getByTestId} = renderChip();
     fireEvent.press(getByTestId('voicechip-secondary'));
     expect(ttsStore.openSetupSheet).toHaveBeenCalledTimes(1);
+  });
+
+  it('compact mode keeps only the speaker action visible', () => {
+    runInAction(() => {
+      ttsStore.currentVoice = systemVoice;
+      ttsStore.playbackState = {mode: 'playing', messageId: 'm1'};
+    });
+    const {getByTestId, queryByTestId} = renderCompactChip();
+    expect(getByTestId('voicechip-speaker')).toBeTruthy();
+    expect(queryByTestId('voicechip-secondary')).toBeNull();
   });
 
   it('voice-chosen: speaker tap toggles autoSpeakEnabled', () => {

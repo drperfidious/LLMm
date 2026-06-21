@@ -222,6 +222,7 @@ describe('chat', () => {
   // ---------------------------------------------------------------------------
 
   describe('active pal auto-load gate', () => {
+    const originalE2E = (global as any).__E2E__;
     const mockPal = {
       id: 'test-pal',
       name: 'Test',
@@ -230,6 +231,7 @@ describe('chat', () => {
     } as any;
 
     beforeEach(() => {
+      (global as any).__E2E__ = false;
       (modelStore.selectModel as jest.Mock).mockClear();
       runInAction(() => {
         (modelStore as any).activeModelId = undefined;
@@ -242,6 +244,10 @@ describe('chat', () => {
           },
         ] as any;
       });
+    });
+
+    afterEach(() => {
+      (global as any).__E2E__ = originalE2E;
     });
 
     it('calls modelStore.selectModel(palDefault) when benchmarkActive=false', () => {
@@ -263,6 +269,20 @@ describe('chat', () => {
       runInAction(() => {
         modelStore.benchmarkActive = true;
       });
+      render(
+        <ChatView
+          messages={[]}
+          onSendPress={jest.fn()}
+          user={user}
+          activePal={mockPal}
+        />,
+        {withNavigation: true, withBottomSheetProvider: true},
+      );
+      expect(modelStore.selectModel).not.toHaveBeenCalled();
+    });
+
+    it('does NOT call modelStore.selectModel in E2E harness builds', () => {
+      (global as any).__E2E__ = true;
       render(
         <ChatView
           messages={[]}

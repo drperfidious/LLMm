@@ -12,6 +12,11 @@ import {useTheme} from '../../hooks';
 import {createStyles} from './styles';
 
 import {ErrorState, L10nContext, formatBytes} from '../../utils';
+import {
+  openReportEmailDraft,
+  REPORT_RECIPIENT_EMAIL,
+  ReportEmailResult,
+} from '../../utils/reportEmail';
 
 import {Sheet, TextInput} from '..';
 
@@ -112,35 +117,60 @@ export const ModelErrorReportSheet: React.FC<ModelErrorReportSheetProps> = ({
     onClose();
   }, [onClose]);
 
+  const showEmailFallbackAlert = (
+    result: ReportEmailResult,
+    onPress?: () => void,
+  ) => {
+    if (result.openedMailApp) {
+      Alert.alert(
+        'Email draft opened',
+        `Server reporting failed, so a prefilled email to ${REPORT_RECIPIENT_EMAIL} was opened. Send it to forward the report.${
+          result.copiedBodyToClipboard
+            ? ' The full report was copied to your clipboard because it was too large for the email link.'
+            : ''
+        }`,
+        [{text: l10n.common.ok, onPress}],
+      );
+      return;
+    }
+
+    Alert.alert(
+      'Report copied',
+      `Server reporting failed and no email app opened. The full report was copied to your clipboard; paste it into an email to ${REPORT_RECIPIENT_EMAIL}.`,
+      [{text: l10n.common.ok, onPress}],
+    );
+  };
+
   const handleSubmit = async () => {
     setIsSubmitting(true);
+    const reportPayload = {
+      reportType: 'model-load-error' as const,
+      version: 1 as const,
+      errorMessage: errorMessage,
+      modelInfo: includeModelInfo
+        ? {
+            name: modelName,
+            id: modelId,
+            url: modelUrl,
+            size: modelSize,
+          }
+        : undefined,
+      contextParams: includeContextParams ? contextParams : undefined,
+      deviceInfo: includeDeviceInfo
+        ? {
+            model: deviceData?.deviceModel,
+            systemName: deviceData?.systemName,
+            systemVersion: deviceData?.systemVersion,
+            totalMemory: deviceData?.totalMemory,
+            cpuArch: deviceData?.cpuArch,
+            isEmulator: deviceData?.isEmulator,
+          }
+        : undefined,
+      additionalInfo: additionalInfo.trim() || undefined,
+    };
 
     try {
-      await submitModelLoadErrorReport({
-        reportType: 'model-load-error',
-        version: 1,
-        errorMessage: errorMessage,
-        modelInfo: includeModelInfo
-          ? {
-              name: modelName,
-              id: modelId,
-              url: modelUrl,
-              size: modelSize,
-            }
-          : undefined,
-        contextParams: includeContextParams ? contextParams : undefined,
-        deviceInfo: includeDeviceInfo
-          ? {
-              model: deviceData?.deviceModel,
-              systemName: deviceData?.systemName,
-              systemVersion: deviceData?.systemVersion,
-              totalMemory: deviceData?.totalMemory,
-              cpuArch: deviceData?.cpuArch,
-              isEmulator: deviceData?.isEmulator,
-            }
-          : undefined,
-        additionalInfo: additionalInfo.trim() || undefined,
-      });
+      await submitModelLoadErrorReport(reportPayload);
 
       Alert.alert(
         l10n.components.modelErrorReportSheet.success.title,
@@ -149,11 +179,13 @@ export const ModelErrorReportSheet: React.FC<ModelErrorReportSheetProps> = ({
       );
     } catch (err) {
       console.error('Model error report submission error:', err);
-      Alert.alert(
-        l10n.components.modelErrorReportSheet.error.title,
-        l10n.components.modelErrorReportSheet.error.message,
-        [{text: l10n.common.ok}],
-      );
+      const emailResult = await openReportEmailDraft({
+        reportType: 'model-load-error',
+        subject: `LLMm model load crash report: ${modelName ?? modelId ?? 'unknown model'}`,
+        payload: reportPayload,
+        submissionError: err,
+      });
+      showEmailFallbackAlert(emailResult, handleClose);
     } finally {
       setIsSubmitting(false);
     }

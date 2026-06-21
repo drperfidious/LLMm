@@ -11,7 +11,20 @@ import type {Engine, StreamingHandle} from './types';
  * multi-sentence prosody without pushing latency too high on the
  * second-batch flush.
  */
-const STREAM_TARGET_CHARS = 300;
+const DEFAULT_STREAM_TARGET_CHARS = 300;
+
+/**
+ * Supertonic's vector-estimator ONNX path is less tolerant of long
+ * punctuation-free segments than Kokoro/system voices. Keep its JS batch
+ * target small; the package-level streaming chunker patch enforces the
+ * native hard split.
+ */
+const SUPERTONIC_STREAM_TARGET_CHARS = 120;
+
+const getStreamTargetChars = (engine: Engine): number =>
+  engine.id === 'supertonic'
+    ? SUPERTONIC_STREAM_TARGET_CHARS
+    : DEFAULT_STREAM_TARGET_CHARS;
 
 /**
  * Bridges the library's `createSpeechStream` with our `ttsRuntime`
@@ -60,7 +73,7 @@ export function createEngineStreamingHandle(
           return;
         }
         stream = Speech.createSpeechStream(voiceId, {
-          targetChars: STREAM_TARGET_CHARS,
+          targetChars: getStreamTargetChars(engine),
           ...options,
         });
         acquired = true;

@@ -33,6 +33,7 @@ import {
   getCpuCoreCount,
   getRecommendedThreadCount,
 } from '../../utils/deviceCapabilities';
+import {createDefaultContextInitParams} from '../../utils/contextInitParamsVersions';
 
 // Mock deviceCapabilities
 jest.mock('../../utils/deviceCapabilities', () => ({
@@ -103,6 +104,19 @@ const presetModelFixture: Model = createModel({
   params: 2614341888,
 }) as Model;
 
+const createMockLoadedContext = () =>
+  ({
+    release: jest.fn().mockResolvedValue(undefined),
+    initMultimodal: jest.fn().mockResolvedValue(true),
+    isMultimodalEnabled: jest.fn().mockResolvedValue(false),
+    getFormattedChat: jest.fn().mockResolvedValue({
+      type: 'jinja',
+      prompt: 'user\ntest\nassistant\n',
+      has_media: false,
+    }),
+    model: {metadata: {}, isChatTemplateSupported: false},
+  }) as unknown as LlamaContext;
+
 describe('ModelStore', () => {
   let showErrorSpy: jest.SpyInstance;
 
@@ -116,6 +130,18 @@ describe('ModelStore', () => {
     modelStore.models = []; // Clear models before each test
     modelStore.context = undefined;
     modelStore.activeModelId = undefined;
+    modelStore.lastUsedModelId = undefined;
+    modelStore.activeContextSettings = undefined;
+    modelStore.metalLoadFailures = {};
+    modelStore.contextInitParams = createDefaultContextInitParams();
+    modelStore.requestedContextSize = undefined;
+    modelStore.modelInitProfiles = {};
+    modelStore.modelInitProfileRevision = 0;
+    (modelStore as any).contextInitParamsOwnerModelId = undefined;
+    (modelStore as any).pendingMetalLoad = undefined;
+    (modelStore as any).pendingModelId = null;
+    (modelStore as any).contextOperationMutex = Promise.resolve();
+    modelStore.benchmarkActive = false;
 
     // Re-setup download manager mocks after clearAllMocks
     (downloadManager.syncWithActiveDownloads as jest.Mock).mockResolvedValue(
@@ -1494,15 +1520,25 @@ describe('ModelStore', () => {
   });
 
   describe('context management', () => {
+    const originalE2E = (global as any).__E2E__;
+
     beforeEach(() => {
       jest.clearAllMocks();
+      (global as any).__E2E__ = false;
       // Reset store state
       modelStore.models = [];
       modelStore.context = undefined;
       modelStore.activeModelId = undefined;
     });
 
-    it('should handle app state changes correctly', async () => {
+    afterEach(() => {
+      (global as any).__E2E__ = originalE2E;
+      jest.useRealTimers();
+    });
+
+    it('should delay context release after going to background', async () => {
+      jest.useFakeTimers();
+      modelStore.backgroundAutoReleaseDelayMs = 100;
       // Setup
       modelStore.useAutoRelease = true;
       const mockRelease = jest.fn();
@@ -1515,9 +1551,42 @@ describe('ModelStore', () => {
       // Simulate going to background
       await modelStore.handleAppStateChange('background');
 
-      // Check if context was released
+      // Release is delayed so quick app switches do not reset the app/model.
+      expect(mockRelease).not.toHaveBeenCalled();
+      expect(modelStore.context).toBeDefined();
+
+      jest.advanceTimersByTime(100);
+      await Promise.resolve();
+      await Promise.resolve();
+      await Promise.resolve();
+      await Promise.resolve();
+
+      // Check if context was released after the grace period
       expect(mockRelease).toHaveBeenCalled(); // Check the mock function directly
       expect(modelStore.context).toBeUndefined();
+      jest.useRealTimers();
+    });
+
+    it('should cancel pending background release when returning active quickly', async () => {
+      jest.useFakeTimers();
+      modelStore.backgroundAutoReleaseDelayMs = 100;
+      modelStore.useAutoRelease = true;
+      const mockRelease = jest.fn();
+      modelStore.context = {
+        release: mockRelease,
+      } as any;
+      modelStore.activeModelId = 'test-id';
+      modelStore.appState = 'active';
+
+      await modelStore.handleAppStateChange('background');
+      await modelStore.handleAppStateChange('active');
+      jest.advanceTimersByTime(100);
+      await Promise.resolve();
+      await Promise.resolve();
+
+      expect(mockRelease).not.toHaveBeenCalled();
+      expect(modelStore.context).toBeDefined();
+      jest.useRealTimers();
     });
 
     it('should not release context when auto-release is disabled', async () => {
@@ -1558,6 +1627,41 @@ describe('ModelStore', () => {
       await modelStore.handleAppStateChange('active');
 
       expect(mockInitContext).toHaveBeenCalledWith(model);
+    });
+
+    it('clears auto-release flags when foreground reload fails', async () => {
+      const model = {...presetModelFixture, isDownloaded: true};
+      modelStore.models = [model];
+      modelStore.wasAutoReleased = true;
+      modelStore.lastAutoReleasedModelId = model.id;
+      modelStore.initContext = jest
+        .fn()
+        .mockRejectedValue(new Error('reload failed'));
+
+      modelStore.appState = 'background';
+      await expect(modelStore.handleAppStateChange('active')).resolves.toBe(
+        undefined,
+      );
+
+      expect(modelStore.wasAutoReleased).toBe(false);
+      expect(modelStore.lastAutoReleasedModelId).toBeUndefined();
+    });
+
+    it('clears auto-release flags without reloading in E2E harness builds', async () => {
+      (global as any).__E2E__ = true;
+      const model = {...presetModelFixture, isDownloaded: true};
+      modelStore.models = [model];
+      modelStore.wasAutoReleased = true;
+      modelStore.lastAutoReleasedModelId = model.id;
+      const initContext = jest.fn();
+      modelStore.initContext = initContext;
+
+      modelStore.appState = 'background';
+      await modelStore.handleAppStateChange('active');
+
+      expect(initContext).not.toHaveBeenCalled();
+      expect(modelStore.wasAutoReleased).toBe(false);
+      expect(modelStore.lastAutoReleasedModelId).toBeUndefined();
     });
   });
 
@@ -2100,6 +2204,15 @@ describe('ModelStore', () => {
       expect(modelStore.contextInitParams.cache_type_k).toBe('q8_0'); // Should change
     });
 
+    it('should preserve explicit Turbo K/V cache settings', () => {
+      modelStore.setFlashAttnType('on' as any);
+      modelStore.setCacheTypeV('turbo3' as any);
+      modelStore.setCacheTypeK('turbo4' as any);
+
+      expect(modelStore.contextInitParams.cache_type_k).toBe('turbo4');
+      expect(modelStore.contextInitParams.cache_type_v).toBe('turbo3');
+    });
+
     it('should set cache type V only when flash attention is enabled', () => {
       // Disable flash attention
       modelStore.setFlashAttnType('off' as any);
@@ -2110,6 +2223,20 @@ describe('ModelStore', () => {
       modelStore.setFlashAttnType('on' as any);
       modelStore.setCacheTypeV('q8_0' as any);
       expect(modelStore.contextInitParams.cache_type_v).toBe('q8_0'); // Should change
+    });
+
+    it('should pass persisted Turbo K/V through to context init', async () => {
+      modelStore.setFlashAttnType('on' as any);
+      modelStore.contextInitParams = {
+        ...modelStore.contextInitParams,
+        cache_type_k: 'turbo4' as any,
+        cache_type_v: 'turbo3' as any,
+      };
+
+      const effective = await modelStore.getEffectiveContextInitParams();
+
+      expect(effective.cache_type_k).toBe('turbo4');
+      expect(effective.cache_type_v).toBe('turbo3');
     });
 
     it('should set n_batch', () => {
@@ -2125,6 +2252,259 @@ describe('ModelStore', () => {
     it('should set n_ctx', () => {
       modelStore.setNContext(2048);
       expect(modelStore.contextInitParams.n_ctx).toBe(2048);
+      expect(modelStore.requestedContextSize).toBe(2048);
+    });
+
+    it('accepts high boundary context directly', () => {
+      const savedOS = Platform.OS;
+      Platform.OS = 'ios';
+      const model = {
+        ...presetModelFixture,
+        id: 'bonsai',
+        name: 'Ternary Bonsai 8B',
+        params: 8_188_548_096,
+        size: 2_182_184_672,
+        ggufMetadata: {context_length: 65536} as any,
+        isDownloaded: true,
+      };
+
+      try {
+        modelStore.models = [model];
+        modelStore.activeModelId = model.id;
+
+        modelStore.setNContext(50000);
+
+        expect(modelStore.contextInitParams.n_ctx).toBe(50000);
+        expect(modelStore.requestedContextSize).toBe(50000);
+      } finally {
+        Platform.OS = savedOS;
+      }
+    });
+
+    it('saves high per-model profile context directly', () => {
+      const savedOS = Platform.OS;
+      Platform.OS = 'ios';
+      const model = {
+        ...presetModelFixture,
+        id: 'bonsai',
+        name: 'Ternary Bonsai 8B',
+        params: 8_188_548_096,
+        size: 2_182_184_672,
+        ggufMetadata: {context_length: 65536} as any,
+        isDownloaded: true,
+      };
+      const settings = {
+        ...createDefaultContextInitParams(),
+        n_ctx: 50000,
+      };
+
+      try {
+        modelStore.models = [model];
+        modelStore.activeModelId = model.id;
+
+        modelStore.saveModelInitProfileSettings(
+          model.id,
+          settings,
+          false,
+          'manual',
+          50000,
+        );
+
+        expect(modelStore.modelInitProfiles[model.id].settings.n_ctx).toBe(
+          50000,
+        );
+        expect(
+          modelStore.modelInitProfiles[model.id].requestedContextSize,
+        ).toBe(50000);
+        expect(modelStore.contextInitParams.n_ctx).toBe(50000);
+        expect(modelStore.requestedContextSize).toBe(50000);
+      } finally {
+        Platform.OS = savedOS;
+      }
+    });
+
+    it('applies legacy high-context profiles directly', () => {
+      const savedOS = Platform.OS;
+      Platform.OS = 'ios';
+      const model = {
+        ...presetModelFixture,
+        id: 'bonsai',
+        name: 'Ternary Bonsai 8B',
+        params: 8_188_548_096,
+        size: 2_182_184_672,
+        ggufMetadata: {context_length: 65536} as any,
+        isDownloaded: true,
+      };
+
+      try {
+        modelStore.models = [model];
+        modelStore.modelInitProfiles = {
+          [model.id]: {
+            version: 1,
+            settings: {
+              ...createDefaultContextInitParams(),
+              n_ctx: 50000,
+            },
+            allowUnsafeContextLimits: false,
+            updatedAt: '2026-06-20T00:00:00.000Z',
+            source: 'manual',
+          },
+        };
+
+        modelStore.applyModelInitProfile(model.id);
+
+        expect(modelStore.contextInitParams.n_ctx).toBe(50000);
+        expect(modelStore.requestedContextSize).toBe(50000);
+        expect(modelStore.allowUnsafeContextLimits).toBe(false);
+      } finally {
+        Platform.OS = savedOS;
+      }
+    });
+
+    it('autosaves load settings into the active model profile', () => {
+      const model = {...presetModelFixture, isDownloaded: true};
+      modelStore.models = [model];
+      modelStore.activeModelId = model.id;
+
+      modelStore.setNContext(32768);
+      modelStore.setNBatch(128);
+      modelStore.setNUBatch(128);
+      modelStore.setFlashAttnType('on');
+      modelStore.setCacheTypeK('turbo4' as any);
+      modelStore.setCacheTypeV('turbo3' as any);
+
+      const profile = modelStore.modelInitProfiles[model.id];
+      expect(profile).toBeDefined();
+      expect(profile.settings.n_ctx).toBe(32768);
+      expect(profile.requestedContextSize).toBe(32768);
+      expect(profile.settings.n_batch).toBe(128);
+      expect(profile.settings.n_ubatch).toBe(128);
+      expect(profile.settings.flash_attn_type).toBe('on');
+      expect(profile.settings.cache_type_k).toBe('turbo4');
+      expect(profile.settings.cache_type_v).toBe('turbo3');
+      expect(profile.source).toBe('manual');
+    });
+
+    it('applies a saved model profile before every local initContext route', async () => {
+      const {initLlama} = require('llama.rn');
+      const initLlamaMock = initLlama as jest.Mock;
+      initLlamaMock.mockReset();
+      initLlamaMock.mockResolvedValue(createMockLoadedContext());
+
+      const modelA = {
+        ...presetModelFixture,
+        id: 'model-a',
+        name: '1.7B profile',
+        isDownloaded: true,
+      };
+      const modelB = {
+        ...presetModelFixture,
+        id: 'model-b',
+        name: '8B profile',
+        isDownloaded: true,
+      };
+
+      modelStore.models = [modelA, modelB];
+      modelStore.activeModelId = modelA.id;
+      modelStore.contextInitParams = {
+        ...modelStore.contextInitParams,
+        n_ctx: 32768,
+        n_batch: 512,
+        n_ubatch: 512,
+        flash_attn_type: 'on',
+        cache_type_k: 'f16',
+        cache_type_v: 'f16',
+      };
+      modelStore.modelInitProfiles = {
+        [modelB.id]: {
+          version: 1,
+          settings: {
+            ...modelStore.contextInitParams,
+            n_ctx: 8192,
+            n_batch: 128,
+            n_ubatch: 128,
+            cache_type_k: 'turbo4' as any,
+            cache_type_v: 'turbo3' as any,
+          },
+          allowUnsafeContextLimits: true,
+          updatedAt: '2026-06-20T00:00:00.000Z',
+          source: 'manual',
+        },
+      };
+
+      await modelStore.initContext(modelB);
+
+      expect(modelStore.contextInitParams.n_ctx).toBe(8192);
+      expect(modelStore.contextInitParams.n_batch).toBe(128);
+      expect(modelStore.contextInitParams.n_ubatch).toBe(128);
+      expect(modelStore.contextInitParams.cache_type_k).toBe('turbo4');
+      expect(modelStore.contextInitParams.cache_type_v).toBe('turbo3');
+      expect(modelStore.allowUnsafeContextLimits).toBe(true);
+      expect(initLlamaMock).toHaveBeenCalledWith(
+        expect.objectContaining({
+          n_ctx: 8192,
+          n_batch: 128,
+          n_ubatch: 128,
+          cache_type_k: 'turbo4',
+          cache_type_v: 'turbo3',
+        }),
+        expect.any(Function),
+      );
+      expect(modelStore.activeModelId).toBe(modelB.id);
+    });
+
+    it('uses a fresh default profile when switching to a model without a saved profile', async () => {
+      const {initLlama} = require('llama.rn');
+      const initLlamaMock = initLlama as jest.Mock;
+      initLlamaMock.mockReset();
+      initLlamaMock.mockResolvedValue(createMockLoadedContext());
+
+      const modelA = {
+        ...presetModelFixture,
+        id: 'model-a',
+        name: '1.7B tuned profile',
+        isDownloaded: true,
+      };
+      const modelB = {
+        ...presetModelFixture,
+        id: 'model-b',
+        name: '8B no profile yet',
+        isDownloaded: true,
+      };
+      const defaults = createDefaultContextInitParams();
+
+      modelStore.models = [modelA, modelB];
+      modelStore.activeModelId = modelA.id;
+      (modelStore as any).contextInitParamsOwnerModelId = modelA.id;
+      modelStore.contextInitParams = {
+        ...modelStore.contextInitParams,
+        n_ctx: 32768,
+        n_batch: 128,
+        n_ubatch: 128,
+        cache_type_k: 'turbo4' as any,
+        cache_type_v: 'turbo4' as any,
+      };
+
+      await modelStore.initContext(modelB);
+
+      expect(modelStore.modelInitProfiles[modelA.id].settings.n_ctx).toBe(
+        32768,
+      );
+      expect(modelStore.contextInitParams.n_ctx).toBe(defaults.n_ctx);
+      expect(modelStore.contextInitParams.n_batch).toBe(defaults.n_batch);
+      expect(modelStore.contextInitParams.cache_type_k).toBe(
+        defaults.cache_type_k,
+      );
+      expect(initLlamaMock).toHaveBeenCalledWith(
+        expect.objectContaining({
+          n_ctx: defaults.n_ctx,
+          cache_type_k: defaults.cache_type_k,
+        }),
+        expect.any(Function),
+      );
+      expect(modelStore.modelInitProfiles[modelB.id].settings.n_ctx).toBe(
+        defaults.n_ctx,
+      );
     });
 
     it('should get effective batch values respecting constraints', () => {
@@ -2151,6 +2531,8 @@ describe('ModelStore', () => {
     });
 
     it('should get comprehensive effective context init params', async () => {
+      const savedOS = Platform.OS;
+      Platform.OS = 'android';
       modelStore.setNContext(2048);
       modelStore.setNBatch(1024);
       modelStore.setNUBatch(512);
@@ -2162,28 +2544,143 @@ describe('ModelStore', () => {
       };
       modelStore.setNGPULayers(32);
 
-      const effective = await modelStore.getEffectiveContextInitParams();
+      try {
+        const effective = await modelStore.getEffectiveContextInitParams();
 
-      expect(effective.n_ctx).toBe(2048);
-      expect(effective.n_batch).toBe(1024);
-      expect(effective.n_ubatch).toBe(512);
-      expect(effective.n_threads).toBe(8);
-      expect(effective.flash_attn_type).toBe('on');
-      expect(effective.n_gpu_layers).toBe(32);
-      expect(effective.use_mlock).toBe(false);
-      expect(effective.use_mmap).toBe(true); // Should be boolean for llama.rn compatibility
+        expect(effective.n_ctx).toBe(2048);
+        expect(effective.n_batch).toBe(1024);
+        expect(effective.n_ubatch).toBe(512);
+        expect(effective.n_threads).toBe(8);
+        expect(effective.flash_attn_type).toBe('on');
+        expect(effective.n_gpu_layers).toBe(32);
+        expect(effective.use_mlock).toBe(false);
+        expect(effective.use_mmap).toBe(true); // Should be boolean for llama.rn compatibility
+      } finally {
+        Platform.OS = savedOS;
+      }
+    });
+
+    it('uses requested boundary iOS context while keeping memory safeguards', async () => {
+      const savedOS = Platform.OS;
+      Platform.OS = 'ios';
+      modelStore.contextInitParams = {
+        ...modelStore.contextInitParams,
+        n_ctx: 100000,
+        n_batch: 2048,
+        n_ubatch: 1024,
+        use_mmap: 'false',
+        use_mlock: true,
+        no_extra_bufts: false,
+      };
+      modelStore.setAllowUnsafeContextLimits(false);
+
+      try {
+        const effective = await modelStore.getEffectiveContextInitParams(
+          '/tmp/Ternary-Bonsai-8B-PQ2_0.gguf',
+          {
+            id: 'bonsai',
+            name: 'Ternary Bonsai 8B',
+            params: 8_188_548_096,
+            size: 2_182_184_672,
+            ggufMetadata: {context_length: 65536},
+          } as any,
+        );
+
+        expect(effective.n_ctx).toBe(100000);
+        expect(effective.n_batch).toBe(128);
+        expect(effective.n_ubatch).toBe(128);
+        expect(effective.use_mmap).toBe(true);
+        expect(effective.use_mlock).toBe(false);
+        expect(effective.no_extra_bufts).toBe(true);
+        expect(effective.warmup).toBe(false);
+      } finally {
+        Platform.OS = savedOS;
+      }
+    });
+
+    it('allows higher boundary iOS context when unsafe context limits are enabled', async () => {
+      const savedOS = Platform.OS;
+      Platform.OS = 'ios';
+      modelStore.contextInitParams = {
+        ...modelStore.contextInitParams,
+        n_ctx: 50000,
+        n_batch: 2048,
+        n_ubatch: 1024,
+        use_mmap: 'false',
+        use_mlock: true,
+        no_extra_bufts: false,
+      };
+      modelStore.setAllowUnsafeContextLimits(true);
+
+      try {
+        const effective = await modelStore.getEffectiveContextInitParams(
+          '/tmp/Ternary-Bonsai-8B-PQ2_0.gguf',
+          {
+            id: 'bonsai',
+            name: 'Ternary Bonsai 8B',
+            params: 8_188_548_096,
+            size: 2_182_184_672,
+            ggufMetadata: {context_length: 65536},
+          } as any,
+        );
+
+        expect(effective.n_ctx).toBe(50000);
+        expect(effective.n_batch).toBe(128);
+        expect(effective.n_ubatch).toBe(128);
+        expect(effective.use_mmap).toBe(true);
+        expect(effective.use_mlock).toBe(false);
+        expect(effective.no_extra_bufts).toBe(true);
+        expect(effective.warmup).toBe(false);
+      } finally {
+        modelStore.setAllowUnsafeContextLimits(false);
+        Platform.OS = savedOS;
+      }
+    });
+
+    it('does not clamp requested context to the GGUF metadata limit', async () => {
+      const savedOS = Platform.OS;
+      Platform.OS = 'ios';
+      modelStore.contextInitParams = {
+        ...modelStore.contextInitParams,
+        n_ctx: 100000,
+      };
+      modelStore.setAllowUnsafeContextLimits(true);
+
+      try {
+        const effective = await modelStore.getEffectiveContextInitParams(
+          '/tmp/Ternary-Bonsai-8B-PQ2_0.gguf',
+          {
+            id: 'bonsai',
+            name: 'Ternary Bonsai 8B',
+            params: 8_188_548_096,
+            size: 2_182_184_672,
+            ggufMetadata: {context_length: 65536},
+          } as any,
+        );
+
+        expect(effective.n_ctx).toBe(100000);
+      } finally {
+        modelStore.setAllowUnsafeContextLimits(false);
+        Platform.OS = savedOS;
+      }
     });
 
     it('should maintain backward compatibility with getEffectiveInitSettings', async () => {
+      const savedOS = Platform.OS;
+      Platform.OS = 'android';
       modelStore.setNContext(2048);
       modelStore.setNBatch(1024);
       modelStore.setNUBatch(512);
 
-      const effective = await modelStore.getEffectiveInitSettings();
+      try {
+        const effective = await modelStore.getEffectiveInitSettings();
 
-      expect(effective.n_ctx).toBe(2048);
-      expect(effective.n_batch).toBe(1024);
-      expect(effective.n_ubatch).toBe(512);
+        expect(effective.n_ctx).toBe(2048);
+        expect(effective.n_batch).toBe(1024);
+        expect(effective.n_ubatch).toBe(512);
+      } finally {
+        Platform.OS = savedOS;
+      }
     });
 
     it('should set n_gpu_layers', () => {
@@ -2236,10 +2733,17 @@ describe('ModelStore', () => {
 
   // Add tests for auto-release functionality
   describe('auto-release functionality', () => {
+    const originalE2E = (global as any).__E2E__;
+
     beforeEach(() => {
+      (global as any).__E2E__ = false;
       modelStore.useAutoRelease = true;
       // Reset auto-release state by enabling/disabling known reasons
       modelStore.enableAutoRelease('test-cleanup');
+    });
+
+    afterEach(() => {
+      (global as any).__E2E__ = originalE2E;
     });
 
     it('should disable auto-release with reason', () => {
@@ -2269,6 +2773,11 @@ describe('ModelStore', () => {
 
     it('should be disabled when useAutoRelease is false', () => {
       modelStore.useAutoRelease = false;
+      expect(modelStore.isAutoReleaseEnabled).toBe(false);
+    });
+
+    it('should be disabled in E2E harness builds', () => {
+      (global as any).__E2E__ = true;
       expect(modelStore.isAutoReleaseEnabled).toBe(false);
     });
   });

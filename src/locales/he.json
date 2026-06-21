@@ -451,7 +451,7 @@
     "screenTitle": "מידע על האפליקציה",
     "description": "אפליקציה שמביאה מודלי שפה ישירות לטלפון שלך. מבוססת על התשתית של llama.cpp ו-llama.rn.",
     "supportProject": "תמוך בפרוייקט",
-    "supportProjectDescription": "אם אתם נהנים מהשימוש ב-PocketPal AI, אנא שקלו לתמוך בפרויקט באמצעות:",
+    "supportProjectDescription": "אם אתם נהנים מהשימוש ב-LLMm, אנא שקלו לתמוך בפרויקט באמצעות:",
     "githubButton": "ככב אותנו ב-GitHub",
     "orText": "או",
     "orBy": "או על ידי",
@@ -463,10 +463,10 @@
   },
   "feedback": {
     "title": "שלח משוב",
-    "description": "הקול שלכם חשוב! ספרו לנו איך PocketPal AI עוזר לכם ומה אנחנו יכולים לעשות כדי להפוך אותו לשימושי עוד יותר.",
+    "description": "הקול שלכם חשוב! ספרו לנו איך LLMm עוזר לכם ומה אנחנו יכולים לעשות כדי להפוך אותו לשימושי עוד יותר.",
     "shareThoughtsButton": "שתף את מחשבותיך",
     "useCase": {
-      "label": "עבור אילו שימושים אתם נעזרים ב-PocketPal AI?",
+      "label": "עבור אילו שימושים אתם נעזרים ב-LLMm?",
       "placeholder": "למשל: סיכום טקסטים, משחקי תפקידים וכו'."
     },
     "featureRequests": {
@@ -478,7 +478,7 @@
       "placeholder": "שתף בכל מחשבה נוספת שעשויה להיות לך."
     },
     "usageFrequency": {
-      "label": "באיזו תדירות אתה משתמש ב-PocketPal AI? (אופציונלי)",
+      "label": "באיזו תדירות אתה משתמש ב-LLMm? (אופציונלי)",
       "options": {
         "daily": "יומי",
         "weekly": "שבועי",

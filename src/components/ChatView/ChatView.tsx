@@ -391,7 +391,7 @@ export const ChatView = observer(
     // this auto-load must NOT fire — otherwise it shadows the matrix's per-cell
     // devices/n_gpu_layers via initContext's "already loaded → skip" path.
     React.useEffect(() => {
-      if (modelStore.benchmarkActive) {
+      if (__E2E__ || modelStore.benchmarkActive) {
         return;
       }
       if (activePal) {

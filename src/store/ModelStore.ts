@@ -54,6 +54,38 @@ import iosRulesRaw from './bundledDeviceRules/rules.ios.json';
 // Bump when the migration logic that re-merges the persisted model list
 // changes. Crossing this version runs the one-time prune-and-reconcile.
 export const MODEL_LIST_VERSION = 15;
+const AUTO_RELEASE_POLICY_VERSION = 1;
+const MODEL_INIT_PROFILE_VERSION = 1;
+const IOS_BOUNDARY_MODEL_PARAMS = 6_000_000_000;
+const IOS_BOUNDARY_MODEL_SIZE_BYTES = 2_000_000_000;
+const IOS_BOUNDARY_BATCH_CAP = 128;
+const METAL_LOAD_GUARD_KEY = 'llmm:pending-metal-load';
+
+type MetalLoadAttempt = {
+  modelId: string;
+  modelName?: string;
+  deviceKey: string;
+  requestedGpuLayers: number;
+  effectiveGpuLayers: number;
+  startedAt: string;
+};
+
+type ContextLimitInfo = {
+  requested: number;
+  effective: number;
+  metadataLimit?: number;
+  deviceLimit?: number;
+  limit?: number;
+  boundaryModel: boolean;
+  unsafeLimitsEnabled: boolean;
+  metadataConstrained: boolean;
+  deviceConstrained: boolean;
+  isConstrained: boolean;
+};
+
+type ContextLimitOptions = {
+  allowUnsafeContextLimits?: boolean;
+};
 
 import {
   getHFDefaultSettings,
@@ -71,6 +103,17 @@ import {
   ModelType,
 } from '../utils/types';
 
+export type ModelInitProfileSource = 'manual' | 'load';
+
+export type ModelInitProfile = {
+  version: number;
+  settings: ContextInitParams;
+  allowUnsafeContextLimits: boolean;
+  requestedContextSize?: number;
+  updatedAt: string;
+  source: ModelInitProfileSource;
+};
+
 import {ErrorState, createErrorState} from '../utils/errors';
 import {chatSessionRepository} from '../repositories/ChatSessionRepository';
 import {hasEnoughMemory} from '../hooks/useMemoryCheck';
@@ -85,10 +128,43 @@ import {resolveUseMmap} from '../utils/memorySettings';
 import {
   createContextInitParams,
   createDefaultContextInitParams,
+  migrateContextInitParams,
 } from '../utils/contextInitParamsVersions';
 import NativeHardwareInfo from '../specs/NativeHardwareInfo';
 import {getModelMemoryRequirement} from '../utils/memoryEstimator';
 import {loadLlamaModelInfo} from 'llama.rn';
+import {
+  applyIOSMetalSafetyPolicy,
+  isIOSMetalRequested,
+} from '../utils/iosMetalPolicy';
+
+function positiveIntegerOrFallback(value: unknown, fallback: number): number {
+  const numeric = Number(value);
+  return Number.isFinite(numeric) && numeric > 0
+    ? Math.floor(numeric)
+    : fallback;
+}
+
+function getModelContextLimit(model?: Model): number | undefined {
+  const contextLength = Number(model?.ggufMetadata?.context_length);
+  return Number.isFinite(contextLength) && contextLength > 0
+    ? Math.floor(contextLength)
+    : undefined;
+}
+
+function isIOSBoundaryModel(model?: Model): boolean {
+  if (Platform.OS !== 'ios' || !model) {
+    return false;
+  }
+  return (
+    (model.params ?? 0) >= IOS_BOUNDARY_MODEL_PARAMS ||
+    (model.size ?? 0) >= IOS_BOUNDARY_MODEL_SIZE_BYTES
+  );
+}
+
+function cloneContextInitParams(params: ContextInitParams): ContextInitParams {
+  return migrateContextInitParams(JSON.parse(JSON.stringify(toJS(params))));
+}
 
 /**
  * Factory function to create a Model object for a remote model from an OpenAI-compatible server.
@@ -148,13 +224,19 @@ class ModelStore {
   }
 
   appState: AppStateStatus = AppState.currentState;
-  useAutoRelease: boolean = true;
+  useAutoRelease: boolean = false;
+  allowUnsafeContextLimits: boolean = false;
+  autoReleasePolicyVersion: number = 0;
   // UI loading state - true during model load/release transitions
   isContextLoading: boolean = false;
   loadingModel: Model | undefined = undefined;
 
   // Unified context initialization parameters
   contextInitParams: ContextInitParams = createDefaultContextInitParams();
+  requestedContextSize: number | undefined = undefined;
+  modelInitProfiles: Record<string, ModelInitProfile> = {};
+  modelInitProfileRevision: number = 0;
+  private contextInitParamsOwnerModelId: string | undefined = undefined;
 
   max_threads: number = 4; // Will be set in constructor
 
@@ -179,6 +261,8 @@ class ModelStore {
 
   // System UI protection (runtime)
   private autoReleaseDisabledReasons = new Set<string>();
+  private backgroundAutoReleaseTimer: ReturnType<typeof setTimeout> | undefined;
+  backgroundAutoReleaseDelayMs = 2 * 60 * 1000;
 
   MIN_CONTEXT_SIZE = 200;
 
@@ -204,12 +288,18 @@ class ModelStore {
 
   downloadError: ErrorState | null = null;
   modelLoadError: ErrorState | null = null;
+  downloadRevision: number = 0;
 
   // Memory calibration variables (persisted)
   // Updated at app startup and after model release
   availableMemoryCeiling: number | undefined = undefined;
   // Updated after successful model load using GGUF estimator
   largestSuccessfulLoad: number | undefined = undefined;
+
+  // Per-device/model Metal load failures. Native crashes cannot be caught in
+  // JS, so a pending guard is written before init and consumed on next launch.
+  metalLoadFailures: Record<string, number> = {};
+  private pendingMetalLoad: MetalLoadAttempt | undefined = undefined;
 
   constructor() {
     makeAutoObservable(this, {
@@ -225,16 +315,22 @@ class ModelStore {
         'deviceTier',
         'rulesVersion',
         'useAutoRelease',
+        'allowUnsafeContextLimits',
+        'autoReleasePolicyVersion',
         'contextInitParams',
+        'requestedContextSize',
+        'modelInitProfiles',
         'lastUsedModelId',
         'wasAutoReleased',
         'lastAutoReleasedModelId',
         'availableMemoryCeiling',
         'largestSuccessfulLoad',
+        'metalLoadFailures',
       ],
       storage: AsyncStorage,
     }).then(async () => {
       await this.initializeThreadCount();
+      await this.recoverInterruptedMetalLoad();
       this.initializeStore();
     });
 
@@ -242,12 +338,26 @@ class ModelStore {
 
     // Set up download manager callbacks
     downloadManager.setCallbacks({
+      onStart: modelId => {
+        const model = this.models.find(m => m.id === modelId);
+        if (model) {
+          runInAction(() => {
+            model.isDownloading = true;
+            model.isDownloaded = false;
+            model.progress = model.progress || 0;
+            model.downloadSpeed = undefined;
+            this.downloadRevision += 1;
+          });
+        }
+      },
       onProgress: (modelId, progress) => {
         const model = this.models.find(m => m.id === modelId);
         if (model) {
           runInAction(() => {
+            model.isDownloading = true;
             model.progress = progress.progress;
             model.downloadSpeed = `${progress.speed} ${uiStore.l10n.common.downloadETA}: ${progress.eta}`;
+            this.downloadRevision += 1;
           });
         }
       },
@@ -255,8 +365,11 @@ class ModelStore {
         const model = this.models.find(m => m.id === modelId);
         if (model) {
           runInAction(() => {
+            model.isDownloading = false;
             model.progress = 100;
             model.isDownloaded = true;
+            model.downloadSpeed = undefined;
+            this.downloadRevision += 1;
           });
 
           // Fetch and persist GGUF metadata after download completes
@@ -271,8 +384,11 @@ class ModelStore {
         const model = this.models.find(m => m.id === modelId);
         if (model) {
           runInAction(() => {
+            model.isDownloading = false;
             model.progress = 0;
             model.isDownloaded = false;
+            model.downloadSpeed = undefined;
+            this.downloadRevision += 1;
           });
         }
 
@@ -315,121 +431,629 @@ class ModelStore {
     }
   }
 
-  setNThreads = (n_threads: number) => {
+  private getMetalDeviceKey(): string {
+    try {
+      const deviceId = DeviceInfo.getDeviceId?.();
+      if (deviceId) {
+        return String(deviceId);
+      }
+      const model = DeviceInfo.getModel?.();
+      if (model) {
+        return String(model);
+      }
+    } catch (error) {
+      console.warn('[ModelStore] Failed to resolve Metal device key:', error);
+    }
+    return 'unknown-ios-device';
+  }
+
+  private getMetalFailureKey(
+    modelId: string,
+    deviceKey = this.getMetalDeviceKey(),
+  ) {
+    return `${deviceKey}|${modelId}`;
+  }
+
+  private getMetalFailureCount(model?: Model): number {
+    if (Platform.OS !== 'ios' || !model) {
+      return 0;
+    }
+    return this.metalLoadFailures[this.getMetalFailureKey(model.id)] ?? 0;
+  }
+
+  private async recoverInterruptedMetalLoad() {
+    if (Platform.OS !== 'ios') {
+      return;
+    }
+
+    try {
+      const raw = await AsyncStorage?.getItem?.(METAL_LOAD_GUARD_KEY);
+      if (!raw) {
+        return;
+      }
+
+      const attempt = JSON.parse(raw) as Partial<MetalLoadAttempt>;
+      const modelId = attempt.modelId;
+      const deviceKey = attempt.deviceKey;
+      const startedAtMs = attempt.startedAt
+        ? Date.parse(attempt.startedAt)
+        : Number.NaN;
+      const ageMs = Number.isFinite(startedAtMs) ? Date.now() - startedAtMs : 0;
+
+      if (modelId && deviceKey && ageMs < 48 * 60 * 60 * 1000) {
+        const failureKey = this.getMetalFailureKey(modelId, deviceKey);
+        runInAction(() => {
+          this.metalLoadFailures = {
+            ...this.metalLoadFailures,
+            [failureKey]: (this.metalLoadFailures[failureKey] ?? 0) + 1,
+          };
+        });
+        console.warn(
+          `[ModelStore] Previous app session ended during Metal load for "${attempt.modelName ?? modelId}". Future loads will use a safer Metal cap on this device.`,
+        );
+      }
+    } catch (error) {
+      console.warn(
+        '[ModelStore] Failed to recover interrupted Metal load:',
+        error,
+      );
+    } finally {
+      this.pendingMetalLoad = undefined;
+      if (typeof AsyncStorage?.removeItem === 'function') {
+        await AsyncStorage.removeItem(METAL_LOAD_GUARD_KEY).catch(error => {
+          console.warn('[ModelStore] Failed to clear Metal load guard:', error);
+        });
+      }
+    }
+  }
+
+  private async beginMetalLoadAttempt(
+    model: Model,
+    params: Partial<Omit<ContextParams, 'model'>>,
+  ) {
+    if (Platform.OS !== 'ios') {
+      return;
+    }
+
+    const requestedGpuLayers = positiveIntegerOrFallback(
+      this.contextInitParams.n_gpu_layers,
+      99,
+    );
+    const effectiveGpuLayers = positiveIntegerOrFallback(
+      params.n_gpu_layers,
+      requestedGpuLayers,
+    );
+    const attempt: MetalLoadAttempt = {
+      modelId: model.id,
+      modelName: model.name,
+      deviceKey: this.getMetalDeviceKey(),
+      requestedGpuLayers,
+      effectiveGpuLayers,
+      startedAt: new Date().toISOString(),
+    };
+
+    try {
+      this.pendingMetalLoad = attempt;
+      await AsyncStorage?.setItem?.(
+        METAL_LOAD_GUARD_KEY,
+        JSON.stringify(attempt),
+      );
+    } catch (error) {
+      console.warn('[ModelStore] Failed to arm Metal load guard:', error);
+    }
+  }
+
+  private async clearMetalLoadAttempt() {
+    this.pendingMetalLoad = undefined;
+    if (typeof AsyncStorage?.removeItem === 'function') {
+      await AsyncStorage.removeItem(METAL_LOAD_GUARD_KEY).catch(error => {
+        console.warn('[ModelStore] Failed to clear Metal load guard:', error);
+      });
+    }
+  }
+
+  private async recordMetalLoadFailure(model: Model) {
+    if (Platform.OS !== 'ios') {
+      return;
+    }
+
+    const failureKey = this.getMetalFailureKey(model.id);
     runInAction(() => {
-      this.contextInitParams = {
-        ...this.contextInitParams,
-        n_threads,
+      this.metalLoadFailures = {
+        ...this.metalLoadFailures,
+        [failureKey]: (this.metalLoadFailures[failureKey] ?? 0) + 1,
       };
     });
+    await this.clearMetalLoadAttempt();
+  }
+
+  private async applyIOSMetalSafetyParams(
+    params: Partial<Omit<ContextParams, 'model'>>,
+    model?: Model,
+  ): Promise<Partial<Omit<ContextParams, 'model'>>> {
+    if (!isIOSMetalRequested(params)) {
+      return params;
+    }
+
+    const [totalMemoryBytes, metalInfo, deviceId] = await Promise.all([
+      Promise.resolve(DeviceInfo.getTotalMemory()).catch(error => {
+        console.warn('[ModelStore] Failed to read total device memory:', error);
+        return undefined;
+      }),
+      Promise.resolve(
+        (NativeHardwareInfo as any).getMetalInfo?.() ?? null,
+      ).catch(error => {
+        console.warn('[ModelStore] Failed to read Metal info:', error);
+        return null;
+      }),
+      Promise.resolve(DeviceInfo.getDeviceId?.()).catch(error => {
+        console.warn('[ModelStore] Failed to read device id:', error);
+        return undefined;
+      }),
+    ]);
+
+    const decision = applyIOSMetalSafetyPolicy({
+      params,
+      model,
+      totalMemoryBytes,
+      metalInfo,
+      deviceId,
+      priorFailureCount: this.getMetalFailureCount(model),
+    });
+
+    if (decision.applied) {
+      console.warn(
+        `[ModelStore] iOS Metal safety adjusted n_gpu_layers ${decision.requestedGpuLayers} -> ${decision.effectiveGpuLayers} for "${model?.name ?? model?.id ?? 'unknown model'}": ${decision.reason}`,
+      );
+    }
+
+    return decision.params;
+  }
+
+  private isProfileEligibleModelId(modelId?: string): modelId is string {
+    if (!modelId || this.benchmarkActive) {
+      return false;
+    }
+    const model = this.findModelById(modelId);
+    return !!model && model.origin !== ModelOrigin.REMOTE;
+  }
+
+  private findModelById(modelId?: string): Model | undefined {
+    if (!modelId) {
+      return undefined;
+    }
+    return (
+      this.models.find(m => m.id === modelId) ||
+      this.remoteModels.find(m => m.id === modelId)
+    );
+  }
+
+  private normalizeModelInitProfileSettings(
+    modelId: string,
+    settings: ContextInitParams,
+    allowUnsafeContextLimits: boolean,
+    requestedContextSize: number | undefined = settings.n_ctx,
+  ) {
+    const requestedContext = positiveIntegerOrFallback(
+      requestedContextSize ?? settings.n_ctx,
+      settings.n_ctx ?? createDefaultContextInitParams().n_ctx,
+    );
+    const contextLimitInfo = this.getContextLimitInfo(
+      requestedContext,
+      this.findModelById(modelId),
+      {allowUnsafeContextLimits},
+    );
+    const normalizedSettings = cloneContextInitParams({
+      ...settings,
+      n_ctx: contextLimitInfo.effective,
+    });
+
+    return {
+      settings: normalizedSettings,
+      requestedContextSize: requestedContext,
+    };
+  }
+
+  private assignModelInitProfile(
+    modelId: string | undefined,
+    source: ModelInitProfileSource,
+    settings: ContextInitParams = this.contextInitParams,
+    requestedContextSize: number | undefined = this.requestedContextSize ??
+      settings.n_ctx,
+  ) {
+    if (!this.isProfileEligibleModelId(modelId)) {
+      return;
+    }
+
+    this.modelInitProfiles = {
+      ...this.modelInitProfiles,
+      [modelId]: {
+        version: MODEL_INIT_PROFILE_VERSION,
+        settings: cloneContextInitParams(settings),
+        allowUnsafeContextLimits: this.allowUnsafeContextLimits,
+        requestedContextSize,
+        updatedAt: new Date().toISOString(),
+        source,
+      },
+    };
+    this.modelInitProfileRevision += 1;
+  }
+
+  private assignActiveModelInitProfile(source: ModelInitProfileSource) {
+    this.assignModelInitProfile(this.activeModelId, source);
+  }
+
+  private updateContextInitParams(
+    updater: (current: ContextInitParams) => ContextInitParams,
+    options: {
+      persistActiveProfile?: boolean;
+      requestedContextSize?: number;
+    } = {},
+  ) {
+    const persistActiveProfile = options.persistActiveProfile ?? true;
+    runInAction(() => {
+      this.contextInitParams = cloneContextInitParams(
+        updater(this.contextInitParams),
+      );
+      if (options.requestedContextSize !== undefined) {
+        this.requestedContextSize = options.requestedContextSize;
+      }
+      this.contextInitParamsOwnerModelId = this.isProfileEligibleModelId(
+        this.activeModelId,
+      )
+        ? this.activeModelId
+        : undefined;
+      if (persistActiveProfile) {
+        this.assignActiveModelInitProfile('manual');
+      }
+    });
+  }
+
+  get activeModelInitProfile(): ModelInitProfile | undefined {
+    return this.activeModelId
+      ? this.modelInitProfiles[this.activeModelId]
+      : undefined;
+  }
+
+  saveActiveModelInitProfile = () => {
+    runInAction(() => {
+      this.assignActiveModelInitProfile('manual');
+    });
+  };
+
+  applyModelInitProfile = (modelId: string): boolean => {
+    if (!this.isProfileEligibleModelId(modelId)) {
+      return false;
+    }
+
+    const profile = this.modelInitProfiles[modelId];
+    if (!profile?.settings) {
+      return false;
+    }
+
+    runInAction(() => {
+      const allowUnsafeContextLimits =
+        profile.allowUnsafeContextLimits ?? this.allowUnsafeContextLimits;
+      const requestedContextSize =
+        profile.requestedContextSize ?? profile.settings.n_ctx;
+      const normalizedProfile = this.normalizeModelInitProfileSettings(
+        modelId,
+        profile.settings,
+        allowUnsafeContextLimits,
+        requestedContextSize,
+      );
+      this.contextInitParams = normalizedProfile.settings;
+      this.requestedContextSize = normalizedProfile.requestedContextSize;
+      this.contextInitParamsOwnerModelId = modelId;
+      this.allowUnsafeContextLimits = allowUnsafeContextLimits;
+      this.modelInitProfileRevision += 1;
+    });
+    return true;
+  };
+
+  clearModelInitProfile = (modelId: string) => {
+    runInAction(() => {
+      const {[modelId]: _removed, ...remaining} = this.modelInitProfiles;
+      this.modelInitProfiles = remaining;
+      this.modelInitProfileRevision += 1;
+      if (this.activeModelId === modelId) {
+        this.contextInitParams = this.createInitialModelInitProfileSettings();
+        this.requestedContextSize = this.contextInitParams.n_ctx;
+        this.allowUnsafeContextLimits = false;
+        this.contextInitParamsOwnerModelId = modelId;
+      }
+    });
+  };
+
+  getModelInitProfileDraft = (modelId: string): ModelInitProfile => {
+    const profile = this.modelInitProfiles[modelId];
+    const activeOwnerSettings =
+      this.activeModelId === modelId &&
+      this.contextInitParamsOwnerModelId === modelId;
+    const allowUnsafeContextLimits =
+      profile?.allowUnsafeContextLimits ??
+      (activeOwnerSettings ? this.allowUnsafeContextLimits : false);
+    const baseSettings =
+      profile?.settings ??
+      (activeOwnerSettings
+        ? this.contextInitParams
+        : this.createInitialModelInitProfileSettings());
+    const requestedContextSize =
+      profile?.requestedContextSize ??
+      (activeOwnerSettings
+        ? (this.requestedContextSize ?? this.contextInitParams.n_ctx)
+        : baseSettings.n_ctx);
+    const normalizedProfile = this.normalizeModelInitProfileSettings(
+      modelId,
+      baseSettings,
+      allowUnsafeContextLimits,
+      requestedContextSize,
+    );
+    return {
+      version: MODEL_INIT_PROFILE_VERSION,
+      settings: normalizedProfile.settings,
+      allowUnsafeContextLimits,
+      requestedContextSize: normalizedProfile.requestedContextSize,
+      updatedAt: profile?.updatedAt ?? new Date(0).toISOString(),
+      source: profile?.source ?? 'manual',
+    };
+  };
+
+  saveModelInitProfileSettings = (
+    modelId: string,
+    settings: ContextInitParams,
+    allowUnsafeContextLimits = this.allowUnsafeContextLimits,
+    source: ModelInitProfileSource = 'manual',
+    requestedContextSize: number | undefined = settings.n_ctx,
+  ) => {
+    if (!this.isProfileEligibleModelId(modelId)) {
+      return false;
+    }
+
+    const normalizedProfile = this.normalizeModelInitProfileSettings(
+      modelId,
+      settings,
+      allowUnsafeContextLimits,
+      requestedContextSize,
+    );
+
+    runInAction(() => {
+      this.modelInitProfiles = {
+        ...this.modelInitProfiles,
+        [modelId]: {
+          version: MODEL_INIT_PROFILE_VERSION,
+          settings: normalizedProfile.settings,
+          allowUnsafeContextLimits,
+          requestedContextSize: normalizedProfile.requestedContextSize,
+          updatedAt: new Date().toISOString(),
+          source,
+        },
+      };
+      this.modelInitProfileRevision += 1;
+
+      if (this.activeModelId === modelId) {
+        this.contextInitParams = normalizedProfile.settings;
+        this.requestedContextSize = normalizedProfile.requestedContextSize;
+        this.allowUnsafeContextLimits = allowUnsafeContextLimits;
+        this.contextInitParamsOwnerModelId = modelId;
+      }
+    });
+
+    return true;
+  };
+
+  private prepareModelInitProfileForLoad(model: Model) {
+    if (this.benchmarkActive || model.origin === ModelOrigin.REMOTE) {
+      return;
+    }
+
+    const previousModelId = this.activeModelId ?? this.lastUsedModelId;
+    if (
+      previousModelId &&
+      (!this.contextInitParamsOwnerModelId ||
+        this.contextInitParamsOwnerModelId === previousModelId)
+    ) {
+      this.saveModelInitProfile(previousModelId, 'manual');
+    }
+
+    const applied = this.applyModelInitProfile(model.id);
+    if (applied) {
+      console.log(
+        `[ModelStore] Applied saved load profile for "${model.name}" (${model.id})`,
+      );
+    } else {
+      runInAction(() => {
+        this.contextInitParams = this.createInitialModelInitProfileSettings();
+        this.requestedContextSize = this.contextInitParams.n_ctx;
+        this.allowUnsafeContextLimits = false;
+        this.contextInitParamsOwnerModelId = model.id;
+        this.modelInitProfileRevision += 1;
+      });
+      console.log(
+        `[ModelStore] Using default load profile for "${model.name}" (${model.id})`,
+      );
+    }
+  }
+
+  private createInitialModelInitProfileSettings(): ContextInitParams {
+    const defaults = createDefaultContextInitParams();
+    return cloneContextInitParams({
+      ...defaults,
+      n_threads:
+        this.max_threads > 0
+          ? Math.min(defaults.n_threads, this.max_threads)
+          : defaults.n_threads,
+    });
+  }
+
+  saveModelInitProfile = (
+    modelId: string | undefined,
+    source: ModelInitProfileSource = 'manual',
+  ) => {
+    runInAction(() => {
+      this.assignModelInitProfile(modelId, source);
+    });
+  };
+
+  setNThreads = (n_threads: number) => {
+    this.updateContextInitParams(current => ({
+      ...current,
+      n_threads,
+    }));
   };
 
   setCacheTypeK = (cache_type: CacheType) => {
-    runInAction(() => {
-      // Only allow changing cache type if flash attention is enabled
-      // Support both old flash_attn and new flash_attn_type
-      const flashAttnEnabled =
-        this.contextInitParams.flash_attn ||
-        (this.contextInitParams.flash_attn_type &&
-          this.contextInitParams.flash_attn_type !== 'off');
+    // Only allow changing cache type if flash attention is enabled.
+    // Support both old flash_attn and new flash_attn_type.
+    const flashAttnEnabled =
+      this.contextInitParams.flash_attn ||
+      (this.contextInitParams.flash_attn_type &&
+        this.contextInitParams.flash_attn_type !== 'off');
 
-      if (flashAttnEnabled) {
-        this.contextInitParams = {
-          ...this.contextInitParams,
-          cache_type_k: cache_type,
-        };
-      }
-    });
+    if (flashAttnEnabled) {
+      this.updateContextInitParams(current => ({
+        ...current,
+        cache_type_k: cache_type,
+      }));
+    }
   };
 
   setCacheTypeV = (cache_type: CacheType) => {
-    runInAction(() => {
-      // Only allow changing cache type if flash attention is enabled
-      // Support both old flash_attn and new flash_attn_type
-      const flashAttnEnabled =
-        this.contextInitParams.flash_attn ||
-        (this.contextInitParams.flash_attn_type &&
-          this.contextInitParams.flash_attn_type !== 'off');
+    // Only allow changing cache type if flash attention is enabled.
+    // Support both old flash_attn and new flash_attn_type.
+    const flashAttnEnabled =
+      this.contextInitParams.flash_attn ||
+      (this.contextInitParams.flash_attn_type &&
+        this.contextInitParams.flash_attn_type !== 'off');
 
-      if (flashAttnEnabled) {
-        this.contextInitParams = {
-          ...this.contextInitParams,
-          cache_type_v: cache_type,
-        };
-      }
-    });
+    if (flashAttnEnabled) {
+      this.updateContextInitParams(current => ({
+        ...current,
+        cache_type_v: cache_type,
+      }));
+    }
   };
 
   setNBatch = (n_batch: number) => {
-    runInAction(() => {
-      this.contextInitParams = {
-        ...this.contextInitParams,
-        n_batch,
-      };
-    });
+    this.updateContextInitParams(current => ({
+      ...current,
+      n_batch,
+    }));
   };
 
   setNUBatch = (n_ubatch: number) => {
-    runInAction(() => {
-      this.contextInitParams = {
-        ...this.contextInitParams,
-        n_ubatch,
-      };
-    });
+    this.updateContextInitParams(current => ({
+      ...current,
+      n_ubatch,
+    }));
   };
 
-  setNContext = (n_ctx: number) => {
+  setNContext = (
+    n_ctx: number,
+    options: ContextLimitOptions & {model?: Model} = {},
+  ) => {
+    const requestedContext = positiveIntegerOrFallback(
+      n_ctx,
+      createDefaultContextInitParams().n_ctx,
+    );
+    const effectiveContext = this.getContextLimitInfo(n_ctx, options.model, {
+      allowUnsafeContextLimits: options.allowUnsafeContextLimits,
+    }).effective;
+
+    this.updateContextInitParams(
+      current => ({
+        ...current,
+        n_ctx: effectiveContext,
+      }),
+      {requestedContextSize: requestedContext},
+    );
+  };
+
+  setAllowUnsafeContextLimits = (allowUnsafeContextLimits: boolean) => {
+    const requestedContext =
+      this.requestedContextSize ?? this.contextInitParams.n_ctx;
+    const effectiveContext = this.getContextLimitInfo(
+      allowUnsafeContextLimits
+        ? requestedContext
+        : this.contextInitParams.n_ctx,
+      undefined,
+      {allowUnsafeContextLimits},
+    ).effective;
+
     runInAction(() => {
-      this.contextInitParams = {
-        ...this.contextInitParams,
-        n_ctx,
-      };
+      this.allowUnsafeContextLimits = allowUnsafeContextLimits;
+      this.requestedContextSize = requestedContext;
+      if (effectiveContext !== this.contextInitParams.n_ctx) {
+        this.contextInitParams = cloneContextInitParams({
+          ...this.contextInitParams,
+          n_ctx: effectiveContext,
+        });
+      }
+      this.assignActiveModelInitProfile('manual');
     });
   };
 
   setNGPULayers = (n_gpu_layers: number) => {
-    runInAction(() => {
-      this.contextInitParams = {
-        ...this.contextInitParams,
-        n_gpu_layers,
-      };
-    });
+    this.updateContextInitParams(current => ({
+      ...current,
+      n_gpu_layers,
+    }));
   };
 
   setImageMaxTokens = (image_max_tokens: number) => {
-    runInAction(() => {
-      this.contextInitParams = {
-        ...this.contextInitParams,
-        image_max_tokens,
-      };
-    });
+    this.updateContextInitParams(current => ({
+      ...current,
+      image_max_tokens,
+    }));
   };
 
   setUseMlock = (use_mlock: boolean) => {
-    runInAction(() => {
-      this.contextInitParams = {
-        ...this.contextInitParams,
-        use_mlock,
-      };
-    });
+    this.updateContextInitParams(current => ({
+      ...current,
+      use_mlock,
+    }));
   };
 
   setUseMmap = (use_mmap: 'true' | 'false' | 'smart') => {
-    runInAction(() => {
-      this.contextInitParams = {
-        ...this.contextInitParams,
-        use_mmap,
-      };
-    });
+    this.updateContextInitParams(current => ({
+      ...current,
+      use_mmap,
+    }));
   };
 
   setNoExtraBufts = (no_extra_bufts: boolean) => {
-    runInAction(() => {
-      this.contextInitParams = {
-        ...this.contextInitParams,
-        no_extra_bufts,
-      };
-    });
+    this.updateContextInitParams(current => ({
+      ...current,
+      no_extra_bufts,
+    }));
+  };
+
+  getContextLimitInfo = (
+    requestedContext: number,
+    model: Model | undefined = this.activeModel ?? this.lastUsedModel,
+    options: ContextLimitOptions = {},
+  ): ContextLimitInfo => {
+    const allowUnsafeContextLimits =
+      options.allowUnsafeContextLimits ?? this.allowUnsafeContextLimits;
+    const requested = positiveIntegerOrFallback(
+      requestedContext,
+      createDefaultContextInitParams().n_ctx,
+    );
+    const metadataLimit = getModelContextLimit(model);
+    const effective = requested;
+
+    return {
+      requested,
+      effective,
+      metadataLimit,
+      deviceLimit: undefined,
+      limit: undefined,
+      boundaryModel: isIOSBoundaryModel(model),
+      unsafeLimitsEnabled: allowUnsafeContextLimits,
+      metadataConstrained: false,
+      deviceConstrained: false,
+      isConstrained: false,
+    };
   };
 
   /**
@@ -438,20 +1062,43 @@ class ModelStore {
    */
   getEffectiveContextInitParams = async (
     filePath?: string,
+    model?: Model,
   ): Promise<Omit<ContextParams, 'model'>> => {
-    // Apply batch constraints
-    const effectiveContext = this.contextInitParams.n_ctx;
+    const contextLimitInfo = this.getContextLimitInfo(
+      this.contextInitParams.n_ctx,
+      model,
+    );
+    const requestedContext = contextLimitInfo.requested;
+    const contextLimit = contextLimitInfo.metadataLimit;
+    const metadataBoundedContext = contextLimit
+      ? Math.min(requestedContext, contextLimit)
+      : requestedContext;
+    const effectiveContext = contextLimitInfo.effective;
+    if (contextLimitInfo.metadataConstrained) {
+      console.warn(
+        `[ModelStore] Clamping n_ctx from ${requestedContext} to GGUF context_length ${contextLimit} for "${model?.name ?? model?.id}"`,
+      );
+    }
+    const boundaryModel = isIOSBoundaryModel(model);
+    if (contextLimitInfo.deviceConstrained) {
+      console.warn(
+        `[ModelStore] Clamping n_ctx from ${metadataBoundedContext} to iOS boundary cap ${effectiveContext} for "${model?.name ?? model?.id}"`,
+      );
+    }
+
     const effectiveBatch = Math.min(
-      this.contextInitParams.n_batch,
+      positiveIntegerOrFallback(this.contextInitParams.n_batch, 512),
       effectiveContext,
+      boundaryModel ? IOS_BOUNDARY_BATCH_CAP : effectiveContext,
     );
     const effectiveUBatch = Math.min(
-      this.contextInitParams.n_ubatch,
+      positiveIntegerOrFallback(this.contextInitParams.n_ubatch, 512),
       effectiveBatch,
+      boundaryModel ? IOS_BOUNDARY_BATCH_CAP : effectiveBatch,
     );
 
     // Resolve the effective use_mmap value based on the setting
-    const currentUseMmap = this.contextInitParams.use_mmap;
+    const currentUseMmap = this.contextInitParams.use_mmap as unknown;
     let effectiveUseMmap: boolean;
 
     if (currentUseMmap === 'smart') {
@@ -463,8 +1110,19 @@ class ModelStore {
       effectiveUseMmap = true;
     } else if (currentUseMmap === 'false') {
       effectiveUseMmap = false;
+    } else if (currentUseMmap === true) {
+      effectiveUseMmap = true;
+    } else if (currentUseMmap === false) {
+      effectiveUseMmap = false;
     } else {
       // Default fallback
+      effectiveUseMmap = true;
+    }
+
+    if (boundaryModel && !effectiveUseMmap) {
+      console.warn(
+        `[ModelStore] Forcing use_mmap=true for boundary iOS model "${model?.name ?? model?.id}" to avoid no-mmap peak allocation kills`,
+      );
       effectiveUseMmap = true;
     }
 
@@ -473,8 +1131,14 @@ class ModelStore {
       this.contextInitParams.flash_attn_type ??
       (Platform.OS === 'ios' ? 'auto' : 'off');
 
+    const cpuOnly =
+      this.contextInitParams.no_gpu_devices === true ||
+      this.contextInitParams.devices?.some(
+        device => device.toLowerCase() === 'cpu',
+      ) === true;
+
     // Build the params object, filtering out undefined values
-    const params: Partial<Omit<ContextParams, 'model'>> = {
+    let params: Partial<Omit<ContextParams, 'model'>> = {
       n_ctx: effectiveContext,
       n_batch: effectiveBatch,
       n_ubatch: effectiveUBatch,
@@ -482,14 +1146,19 @@ class ModelStore {
       flash_attn_type, // NEW: replaces flash_attn boolean
       cache_type_k: this.contextInitParams.cache_type_k,
       cache_type_v: this.contextInitParams.cache_type_v,
-      n_gpu_layers: this.contextInitParams.n_gpu_layers ?? 99,
-      devices: this.contextInitParams.devices, // NEW
+      n_gpu_layers: cpuOnly ? 0 : (this.contextInitParams.n_gpu_layers ?? 99),
+      devices: cpuOnly ? ['CPU'] : this.contextInitParams.devices, // NEW
       kv_unified: this.contextInitParams.kv_unified ?? true, // NEW (default true!)
       n_parallel: this.contextInitParams.n_parallel ?? 1, // NEW (1 for blocking mode only)
-      use_mlock: this.contextInitParams.use_mlock,
+      use_mlock: boundaryModel ? false : this.contextInitParams.use_mlock,
       use_mmap: effectiveUseMmap,
-      no_extra_bufts: this.contextInitParams.no_extra_bufts,
+      no_extra_bufts: boundaryModel
+        ? true
+        : this.contextInitParams.no_extra_bufts,
+      warmup: boundaryModel ? false : this.contextInitParams.warmup,
     };
+
+    params = await this.applyIOSMetalSafetyParams(params, model);
 
     // Remove undefined values from the params object
     return Object.fromEntries(
@@ -563,6 +1232,13 @@ class ModelStore {
     this.upgradeToFetchedRules();
 
     await this.initializeGpuSettings(); // Should be awaited to ensure GPU settings are applied before initializing context
+
+    if (this.autoReleasePolicyVersion < AUTO_RELEASE_POLICY_VERSION) {
+      runInAction(() => {
+        this.useAutoRelease = false;
+        this.autoReleasePolicyVersion = AUTO_RELEASE_POLICY_VERSION;
+      });
+    }
 
     // Initialize available memory ceiling at app startup if not set
     if (this.availableMemoryCeiling === undefined) {
@@ -840,7 +1516,11 @@ class ModelStore {
   };
 
   get isAutoReleaseEnabled() {
-    return this.useAutoRelease && this.autoReleaseDisabledReasons.size === 0;
+    return (
+      !__E2E__ &&
+      this.useAutoRelease &&
+      this.autoReleaseDisabledReasons.size === 0
+    );
   }
 
   private markAutoReleased = (modelId: string) => {
@@ -864,25 +1544,78 @@ class ModelStore {
     });
   };
 
+  private cancelBackgroundAutoRelease = () => {
+    if (this.backgroundAutoReleaseTimer) {
+      clearTimeout(this.backgroundAutoReleaseTimer);
+      this.backgroundAutoReleaseTimer = undefined;
+      console.log('Cancelled pending background auto-release');
+    }
+  };
+
+  private scheduleBackgroundAutoRelease = (transition: string) => {
+    if (
+      !this.isAutoReleaseEnabled ||
+      !this.activeModelId ||
+      this.activeModel?.origin === ModelOrigin.REMOTE
+    ) {
+      return;
+    }
+
+    const modelId = this.activeModelId;
+    this.cancelBackgroundAutoRelease();
+    console.log(
+      `${transition}: scheduling context auto-release in ${this.backgroundAutoReleaseDelayMs}ms`,
+    );
+
+    this.backgroundAutoReleaseTimer = setTimeout(() => {
+      this.backgroundAutoReleaseTimer = undefined;
+
+      if (
+        !this.isAutoReleaseEnabled ||
+        !this.appState.match(/inactive|background/) ||
+        this.activeModelId !== modelId ||
+        this.activeModel?.origin === ModelOrigin.REMOTE
+      ) {
+        return;
+      }
+
+      console.log('Background grace elapsed: auto-releasing context');
+      this.markAutoReleased(modelId);
+      this.releaseContext().catch(error => {
+        console.warn('[ModelStore] Background auto-release failed:', error);
+      });
+    }, this.backgroundAutoReleaseDelayMs);
+  };
+
   checkAndReloadAutoReleasedModel = async () => {
-    if (this.wasAutoReleased && this.lastAutoReleasedModelId) {
+    if (!this.wasAutoReleased || !this.lastAutoReleasedModelId) {
+      return;
+    }
+
+    try {
+      if (__E2E__) {
+        return;
+      }
       // Skip if the auto-released model ID refers to a remote model
       if (this.lastAutoReleasedModelId.includes('/')) {
         const remoteModel = this.remoteModels.find(
           m => m.id === this.lastAutoReleasedModelId,
         );
         if (remoteModel) {
-          this.clearAutoReleaseFlags();
           return;
         }
       }
       const model = this.models.find(
         m => m.id === this.lastAutoReleasedModelId && m.isDownloaded,
       );
-      if (model) {
-        console.log('Reloading auto-released model:', model.id);
-        await this.initContext(model);
+      if (!model) {
+        return;
       }
+      console.log('Reloading auto-released model:', model.id);
+      await this.initContext(model);
+    } catch (error) {
+      console.warn('[ModelStore] Failed to reload auto-released model:', error);
+    } finally {
       this.clearAutoReleaseFlags();
     }
   };
@@ -894,36 +1627,16 @@ class ModelStore {
       this.appState.match(/inactive|background/) &&
       nextAppState === 'active'
     ) {
+      this.cancelBackgroundAutoRelease();
       // Coming to foreground - check if we need to reload auto-released model
       await this.checkAndReloadAutoReleasedModel();
     } else if (this.appState === 'active' && nextAppState === 'inactive') {
       // active → inactive: NO action (per requirements)
       console.log('Active → Inactive: No auto-release action');
     } else if (this.appState === 'inactive' && nextAppState === 'background') {
-      // inactive → background: release if enabled
-      // Skip for remote models — no native context to release, and
-      // releaseContext() would clear the engine with no reload path.
-      if (
-        this.isAutoReleaseEnabled &&
-        this.activeModelId &&
-        this.activeModel?.origin !== ModelOrigin.REMOTE
-      ) {
-        console.log('Inactive → Background: Auto-releasing context');
-        this.markAutoReleased(this.activeModelId);
-        await this.releaseContext();
-      }
+      this.scheduleBackgroundAutoRelease('Inactive → Background');
     } else if (this.appState === 'active' && nextAppState === 'background') {
-      // active → background: release if enabled (direct transition)
-      // Skip for remote models — same reason as above.
-      if (
-        this.isAutoReleaseEnabled &&
-        this.activeModelId &&
-        this.activeModel?.origin !== ModelOrigin.REMOTE
-      ) {
-        console.log('Active → Background: Auto-releasing context');
-        this.markAutoReleased(this.activeModelId);
-        await this.releaseContext();
-      }
+      this.scheduleBackgroundAutoRelease('Active → Background');
     }
 
     runInAction(() => {
@@ -1048,9 +1761,14 @@ class ModelStore {
   async checkFileExists(model: Model) {
     const filePath = await this.getModelFullPath(model);
     const exists = await RNFS.exists(filePath);
+    const isDownloading = downloadManager.isDownloading(model.id);
 
     // Don't mark as downloaded if currently downloading
-    if (exists && !downloadManager.isDownloading(model.id)) {
+    if (exists && !isDownloading) {
+      runInAction(() => {
+        model.isDownloading = false;
+        model.downloadSpeed = undefined;
+      });
       if (!model.isDownloaded) {
         console.log(
           'checkFileExists: marking as downloaded - this should not happen:',
@@ -1062,14 +1780,20 @@ class ModelStore {
       }
     } else {
       runInAction(() => {
+        model.isDownloading = isDownloading;
         model.isDownloaded = false;
+        if (!isDownloading) {
+          model.progress = 0;
+          model.downloadSpeed = undefined;
+        }
       });
     }
   }
 
   refreshDownloadStatuses = async () => {
-    this.models.forEach(model => {
-      this.checkFileExists(model);
+    await Promise.all(this.models.map(model => this.checkFileExists(model)));
+    runInAction(() => {
+      this.downloadRevision += 1;
     });
   };
 
@@ -1165,7 +1889,11 @@ class ModelStore {
         return;
       }
 
-      console.error('Failed to start download:', err);
+      if (this.benchmarkActive) {
+        console.warn('Benchmark download failed to start:', err);
+      } else {
+        console.error('Failed to start download:', err);
+      }
 
       // Create proper error state for the snackbar system
       const errorState = createErrorState(err, 'download', 'huggingface', {
@@ -1186,15 +1914,23 @@ class ModelStore {
     const model = this.models.find(m => m.id === modelId);
     if (model) {
       runInAction(() => {
+        model.isDownloading = false;
         model.isDownloaded = false;
         model.progress = 0;
+        model.downloadSpeed = undefined;
+        this.downloadRevision += 1;
       });
     }
     this.refreshDownloadStatuses();
   };
 
   get isDownloading() {
-    return (modelId: string) => downloadManager.isDownloading(modelId);
+    return (modelId: string) => {
+      const model = this.models.find(m => m.id === modelId);
+      return Boolean(
+        model?.isDownloading || downloadManager.isDownloading(modelId),
+      );
+    };
   }
 
   getDownloadProgress = (modelId: string) => {
@@ -1656,6 +2392,8 @@ class ModelStore {
       );
     }
 
+    this.prepareModelInitProfileForLoad(model);
+
     // === Phase 1: Pre-flight checks OUTSIDE mutex ===
 
     // Mark intent immediately - this is the "last-one-wins" tracking
@@ -1774,12 +2512,19 @@ class ModelStore {
 
     // Get all effective initialization settings BEFORE try block
     // so they're available for error reporting if initialization fails
-    const effectiveSettings =
-      await this.getEffectiveContextInitParams(filePath);
+    const effectiveSettings = await this.getEffectiveContextInitParams(
+      filePath,
+      model,
+    );
+    let metalLoadGuardActive = false;
 
     try {
       // Create properly versioned ContextInitParams
       const contextInitParams = createContextInitParams(effectiveSettings);
+      if (isIOSMetalRequested(effectiveSettings)) {
+        await this.beginMetalLoadAttempt(model, effectiveSettings);
+        metalLoadGuardActive = true;
+      }
 
       const t0 = Date.now();
       const ctx = await initLlama(
@@ -1794,6 +2539,10 @@ class ModelStore {
       );
       const t1 = Date.now();
       console.log('init time: ', t1 - t0);
+      if (metalLoadGuardActive) {
+        await this.clearMetalLoadAttempt();
+        metalLoadGuardActive = false;
+      }
 
       await this.updateModelStopTokens(ctx, model);
 
@@ -1843,6 +2592,11 @@ class ModelStore {
         this.engine = new LocalCompletionEngine(ctx);
         this.activeContextSettings = contextInitParams;
         this.setActiveModel(model.id);
+        this.contextInitParamsOwnerModelId = model.id;
+        this.assignModelInitProfile(
+          model.id,
+          this.modelInitProfiles[model.id]?.source ?? 'load',
+        );
         this.pendingModelId = null;
       });
 
@@ -1870,10 +2624,14 @@ class ModelStore {
 
       return ctx;
     } catch (error) {
-      console.error(
+      console.warn(
         `Failed to initialize model context for "${model.name}" (${model.id}):`,
         error,
       );
+      if (metalLoadGuardActive) {
+        await this.recordMetalLoadFailure(model);
+        metalLoadGuardActive = false;
+      }
 
       // Set error state for UI feedback - include model info and context params for error reporting
       const errorState = createErrorState(error, 'modelInit', undefined, {
@@ -2113,6 +2871,15 @@ class ModelStore {
       throw new Error('Model is missing remote configuration');
     }
 
+    const previousModelId = this.activeModelId ?? this.lastUsedModelId;
+    if (
+      previousModelId &&
+      (!this.contextInitParamsOwnerModelId ||
+        this.contextInitParamsOwnerModelId === previousModelId)
+    ) {
+      this.saveModelInitProfile(previousModelId);
+    }
+
     // Release any existing context (local or remote)
     await this.releaseContext();
 
@@ -2200,6 +2967,10 @@ class ModelStore {
       // The error handling is now done in the downloadManager callbacks
     } catch (error) {
       // Only handle errors related to the initial setup before the download starts
+      if (this.benchmarkActive) {
+        console.warn('Benchmark HF model download setup failed:', error);
+        return;
+      }
       console.error('Failed to set up HF model download:', error);
       Alert.alert(
         uiStore.l10n.errors.downloadSetupFailedTitle,
@@ -2529,61 +3300,52 @@ class ModelStore {
   }
 
   setNoGpuDevices = (no_gpu_devices: boolean) => {
-    runInAction(() => {
-      this.contextInitParams = {
-        ...this.contextInitParams,
-        no_gpu_devices,
-      };
-    });
+    this.updateContextInitParams(current => ({
+      ...current,
+      no_gpu_devices,
+    }));
   };
 
   // New v2.0 setters
   setDevices = (devices: string[] | undefined) => {
-    runInAction(() => {
-      this.contextInitParams = {
-        ...this.contextInitParams,
-        devices,
-      };
-    });
+    this.updateContextInitParams(current => ({
+      ...current,
+      devices,
+    }));
   };
 
   setFlashAttnType = (flash_attn_type: 'auto' | 'on' | 'off') => {
-    runInAction(() => {
-      this.contextInitParams = {
-        ...this.contextInitParams,
-        flash_attn_type,
-        // Reset cache types to F16 if flash attention is disabled
-        ...(flash_attn_type !== 'off'
-          ? {}
-          : {
-              cache_type_k: CacheType.F16,
-              cache_type_v: CacheType.F16,
-            }),
-      };
-    });
+    this.updateContextInitParams(current => ({
+      ...current,
+      flash_attn_type,
+      // Reset cache types to F16 if flash attention is disabled
+      ...(flash_attn_type !== 'off'
+        ? {}
+        : {
+            cache_type_k: CacheType.F16,
+            cache_type_v: CacheType.F16,
+          }),
+    }));
   };
 
   setKvUnified = (kv_unified: boolean) => {
-    runInAction(() => {
-      this.contextInitParams = {
-        ...this.contextInitParams,
-        kv_unified,
-      };
-    });
+    this.updateContextInitParams(current => ({
+      ...current,
+      kv_unified,
+    }));
   };
 
   setNParallel = (n_parallel: number) => {
-    runInAction(() => {
-      this.contextInitParams = {
-        ...this.contextInitParams,
-        n_parallel,
-      };
-    });
+    this.updateContextInitParams(current => ({
+      ...current,
+      n_parallel,
+    }));
   };
 
   updateUseAutoRelease = (useAutoRelease: boolean) => {
     runInAction(() => {
       this.useAutoRelease = useAutoRelease;
+      this.autoReleasePolicyVersion = AUTO_RELEASE_POLICY_VERSION;
     });
   };
 

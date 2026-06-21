@@ -14,6 +14,8 @@ import {
   BenchmarkIcon,
   ChatIcon,
   EditIcon,
+  EditBoxIcon,
+  AtomIcon,
   ModelIcon,
   PalIcon,
   SettingsIcon,
@@ -509,6 +511,20 @@ export const SidebarContent: React.FC<DrawerContentComponentProps> = observer(
               onPress={() => props.navigation.navigate(ROUTES.MODELS)}
               style={styles.menuDrawerItem}
               testID="drawer-item-models"
+            />
+            <Drawer.Item
+              label={l10n.components.sidebarContent.menuItems.talents}
+              icon={() => <AtomIcon stroke={theme.colors.primary} />}
+              onPress={() => props.navigation.navigate(ROUTES.TALENTS)}
+              style={styles.menuDrawerItem}
+              testID="drawer-item-talents"
+            />
+            <Drawer.Item
+              label={l10n.components.sidebarContent.menuItems.documents}
+              icon={() => <EditBoxIcon stroke={theme.colors.primary} />}
+              onPress={() => props.navigation.navigate(ROUTES.DOCUMENTS)}
+              style={styles.menuDrawerItem}
+              testID="drawer-item-documents"
             />
             <Drawer.Item
               label={l10n.components.sidebarContent.menuItems.benchmark}

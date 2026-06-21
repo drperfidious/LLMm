@@ -152,8 +152,12 @@ class PalsHubApiService {
 
   constructor() {}
 
-  private isConfigured(): boolean {
-    return !!(this.apiBase && this.apiBase !== 'undefined');
+  isConfigured(): boolean {
+    return !!(
+      this.apiBase &&
+      this.apiBase !== 'undefined' &&
+      this.apiBase.trim().length > 0
+    );
   }
 
   // Get authentication headers using fresh session from Supabase
@@ -344,7 +348,14 @@ class PalsHubApiService {
         has_more: response.pagination.has_more,
       };
     } catch (error) {
-      console.error('Failed to fetch pals:', error);
+      if (
+        !(
+          error instanceof PalsHubError &&
+          error.message.includes('PALSHUB_API_BASE_URL')
+        )
+      ) {
+        console.error('Failed to fetch pals:', error);
+      }
       if (error instanceof PalsHubError) {
         throw error;
       }

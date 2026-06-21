@@ -439,7 +439,7 @@
     "screenTitle": "App-Info",
     "description": "Eine App, die Sprachmodelle direkt auf Ihr Smartphone bringt. Sitzt auf den Schultern von llama.cpp und llama.rn.",
     "supportProject": "Unterstütz das Projekt",
-    "supportProjectDescription": "Wenn Sie PocketPal AI gerne nutzen, überdenken Sie bitte eine Unterstützung des Projektes mittels:",
+    "supportProjectDescription": "Wenn Sie LLMm gerne nutzen, überdenken Sie bitte eine Unterstützung des Projektes mittels:",
     "githubButton": "Sternvergabe auf Github",
     "orText": "oder",
     "orBy": "oder durch",
@@ -449,10 +449,10 @@
   },
   "feedback": {
     "title": "Feedback senden",
-    "description": "Ihre Stimme ist wichtig! Sagen Sie uns, wie PocketPal AI Ihnen hilft und was wir tun können, um es noch nützlicher zu machen.",
+    "description": "Ihre Stimme ist wichtig! Sagen Sie uns, wie LLMm Ihnen hilft und was wir tun können, um es noch nützlicher zu machen.",
     "shareThoughtsButton": "Ihre Gedanken teilen",
     "useCase": {
-      "label": "Wofür verwenden Sie PocketPal AI?",
+      "label": "Wofür verwenden Sie LLMm?",
       "placeholder": "z.b. zur Zusammenfassung, für Rollenspiele, etc."
     },
     "featureRequests": {
@@ -464,7 +464,7 @@
       "placeholder": "Teilen Sie ihre weiteren Gedanken mit."
     },
     "usageFrequency": {
-      "label": "Wie oft verwenden Sie PocketPal AI? (Optional)",
+      "label": "Wie oft verwenden Sie LLMm? (Optional)",
       "options": {
         "daily": "Täglich",
         "weekly": "Wöchentlich",

@@ -451,7 +451,7 @@
     "screenTitle": "アプリ情報",
     "description": "言語モデルをスマートフォンで直接利用できるアプリです、llama.cppとllama.rnをベースに開発されています",
     "supportProject": "プロジェクトを応援する",
-    "supportProjectDescription": "PocketPal AIをご利用いただき楽しんでいただけているなら、以下の方法でプロジェクトを応援いただけると幸いです：",
+    "supportProjectDescription": "LLMmをご利用いただき楽しんでいただけているなら、以下の方法でプロジェクトを応援いただけると幸いです：",
     "githubButton": "GitHubでスターをつける",
     "orText": "または",
     "orBy": "または",
@@ -463,10 +463,10 @@
   },
   "feedback": {
     "title": "フィードバックを送信",
-    "description": "ご意見をお聞かせください！PocketPal AIの使い心地やより便利にするためのアイデアをお寄せください",
+    "description": "ご意見をお聞かせください！LLMmの使い心地やより便利にするためのアイデアをお寄せください",
     "shareThoughtsButton": "ご意見を共有する",
     "useCase": {
-      "label": "PocketPal AIをどのように使っていますか？",
+      "label": "LLMmをどのように使っていますか？",
       "placeholder": "例：要約、ロールプレイなど"
     },
     "featureRequests": {

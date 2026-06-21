@@ -12,7 +12,11 @@ import {useChatSession} from '../useChatSession';
 import {chatSessionStore, modelStore, palStore} from '../../store';
 import {assistant} from '../../utils/chat';
 import {chatSessionRepository} from '../../repositories/ChatSessionRepository';
-import {talentRegistry} from '../../services/talents';
+import {
+  registerDefaultTalents,
+  resetRegisteredFlag,
+  talentRegistry,
+} from '../../services/talents';
 import type {MessageType} from '../../utils/types';
 import type {TalentEngine, TalentResult} from '../../services/talents/types';
 
@@ -29,6 +33,7 @@ beforeEach(() => {
     pendingTalentNames: [],
     hitMaxTurns: false,
   };
+  chatSessionStore.setChatMode('agent');
 
   modelStore.models = modelsList as any;
   modelStore.activeModelId = undefined;
@@ -101,6 +106,42 @@ describe('useChatSession — AssistantTurn integration', () => {
         }),
       }),
     );
+  });
+
+  it('forwards active model stop words into normal chat completion params', async () => {
+    chatSessionStore.setChatMode('chat');
+    modelStore.models = [
+      {
+        ...modelsList[0],
+        id: 'stop-word-model',
+        stopWords: ['<|end|>', '<|assistant|>'],
+        defaultStopWords: ['</s>'],
+      },
+    ] as any;
+    modelStore.activeModelId = 'stop-word-model';
+    if (modelStore.context) {
+      modelStore.context.completion = jest
+        .fn()
+        .mockImplementation(async (_params, onData) => {
+          onData?.({content: 'Hello'});
+          return {
+            text: 'Hello',
+            content: 'Hello',
+            timings: {predicted_per_second: 100},
+          };
+        });
+    }
+
+    const {result} = renderHook(() =>
+      useChatSession({current: null}, textMessage.author, mockAssistant),
+    );
+    await act(async () => {
+      await result.current.handleSendPress(textMessage);
+    });
+
+    expect(
+      (modelStore.engine!.completion as jest.Mock).mock.calls[0][0].stop,
+    ).toEqual(['<|end|>', '<|assistant|>']);
   });
 
   it('#2 run_finished with hitMaxTurns:true → metadata.hitMaxTurns written, console.warn emitted, no run_failed surfacing', async () => {
@@ -489,6 +530,140 @@ describe('useChatSession — AssistantTurn integration', () => {
 
     // Cleanup: remove the test talent so other tests aren't affected.
     (talentRegistry as any).engines.delete('calculate');
+  });
+
+  it('Chat mode strips tools and ignores emitted tool_calls', async () => {
+    chatSessionStore.setChatMode('chat');
+    const fakeTalent: TalentEngine = {
+      name: 'calculate',
+      execute: jest.fn(async () => ({type: 'text', summary: '4'})) as any,
+      toToolDefinition: () => ({
+        type: 'function',
+        function: {name: 'calculate', description: '', parameters: {}},
+      }),
+    };
+    talentRegistry.register(fakeTalent);
+    palStore.pals = [
+      {
+        id: 'pal-1',
+        type: 'local',
+        name: 'Calc Pal',
+        systemPrompt: '',
+        parameters: {},
+        parameterSchema: [],
+        isSystemPromptChanged: false,
+        useAIPrompt: false,
+        source: 'local',
+        pact: {talents: [{name: 'calculate', necessity: 'optional'}]},
+      } as any,
+    ];
+    chatSessionStore.sessions = [
+      {
+        id: 'session-1',
+        title: '',
+        date: '',
+        messages: [],
+        completionSettings: {tool_choice: 'auto'} as any,
+        settingsSource: 'pal',
+        activePalId: 'pal-1',
+      } as any,
+    ];
+    chatSessionStore.activeSessionId = 'session-1';
+
+    let capturedParams: any;
+    if (modelStore.context) {
+      modelStore.context.completion = jest
+        .fn()
+        .mockImplementation(async params => {
+          capturedParams = params;
+          return {
+            text: '<tool_call>{"name":"calculate","arguments":{"expression":"2+2"}}</tool_call>',
+            content:
+              '<tool_call>{"name":"calculate","arguments":{"expression":"2+2"}}</tool_call>',
+            tool_calls: [
+              {
+                id: 'c0',
+                type: 'function',
+                function: {
+                  name: 'calculate',
+                  arguments: '{"expression":"2+2"}',
+                },
+              },
+            ],
+          };
+        });
+    }
+
+    const {result} = renderHook(() =>
+      useChatSession({current: null}, textMessage.author, mockAssistant),
+    );
+    await act(async () => {
+      await result.current.handleSendPress(textMessage);
+    });
+
+    expect(capturedParams.tools).toBeUndefined();
+    expect(capturedParams.tool_choice).toBeUndefined();
+    expect(modelStore.context?.completion).toHaveBeenCalledTimes(1);
+    expect(fakeTalent.execute).not.toHaveBeenCalled();
+    expect(chatSessionStore.appendToolOutcome).not.toHaveBeenCalled();
+
+    (talentRegistry as any).engines.delete('calculate');
+  });
+
+  it('Agent mode exposes safe default tools even without an active Pal', async () => {
+    talentRegistry.reset();
+    resetRegisteredFlag();
+    registerDefaultTalents();
+
+    palStore.pals = [];
+    chatSessionStore.sessions = [
+      {
+        id: 'session-1',
+        title: '',
+        date: '',
+        messages: [],
+        completionSettings: {},
+        settingsSource: 'global',
+      } as any,
+    ];
+    chatSessionStore.activeSessionId = 'session-1';
+
+    let capturedParams: any;
+    if (modelStore.context) {
+      modelStore.context.completion = jest
+        .fn()
+        .mockImplementation(async params => {
+          capturedParams = params;
+          return {text: 'ok', content: 'ok'};
+        });
+    }
+
+    const {result} = renderHook(() =>
+      useChatSession({current: null}, textMessage.author, mockAssistant),
+    );
+    await act(async () => {
+      await result.current.handleSendPress({
+        ...textMessage,
+        text: 'Search the web for recent news',
+      });
+    });
+
+    const toolNames = capturedParams.tools.map((t: any) => t.function.name);
+    expect(toolNames).toEqual(
+      expect.arrayContaining(['calculate', 'datetime', 'web_search']),
+    );
+    expect(toolNames).not.toEqual(
+      expect.arrayContaining(['sms_draft', 'mail_draft']),
+    );
+    expect(capturedParams.tool_choice).toBe('auto');
+    expect(capturedParams.messages).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          role: 'system',
+          content: expect.stringContaining('web_search'),
+        }),
+      ]),
+    );
   });
 
   it('#hookTest2 tool turn: appendToolCall lands ids that match the upcoming appendToolOutcome callId by construction (per-frame id-match invariant)', async () => {

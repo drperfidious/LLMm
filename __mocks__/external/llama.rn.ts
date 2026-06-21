@@ -31,6 +31,7 @@ class MockLlamaContext {
   saveSession = jest.fn();
   completion = jest.fn();
   stopCompletion = jest.fn();
+  clearCache = jest.fn();
   bench = jest.fn();
   getFormattedChat = jest.fn().mockResolvedValue({
     type: 'jinja',
@@ -50,6 +51,15 @@ export const loadLlamaModelInfo = jest.fn();
 
 export const initLlama = jest.fn();
 
+export const getBackendDevicesInfo = jest.fn().mockResolvedValue([
+  {
+    backend: 'Metal',
+    type: 'gpu',
+    deviceName: 'Apple A16 GPU',
+    maxMemorySize: 0,
+  },
+]);
+
 export const toggleNativeLog = jest.fn().mockResolvedValue(undefined);
 
 export const addNativeLogListener = jest.fn().mockReturnValue({
@@ -68,4 +78,5 @@ export default {
   addNativeLogListener,
   CompletionParams: jest.fn(),
   loadLlamaModelInfo,
+  getBackendDevicesInfo,
 };

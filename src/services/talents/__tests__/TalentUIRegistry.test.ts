@@ -45,9 +45,10 @@ describe('TalentUIRegistry', () => {
       resetRegisteredFlag();
     });
 
-    it('registers render_html UI alongside engines', () => {
+    it('registers visual UIs alongside engines', () => {
       registerDefaultTalents();
       expect(talentUIRegistry.has('render_html')).toBe(true);
+      expect(talentUIRegistry.has('workspace_shell')).toBe(true);
     });
 
     it('is idempotent across calls — same UI instance', () => {
@@ -57,6 +58,7 @@ describe('TalentUIRegistry', () => {
       const secondInstance = talentUIRegistry.get('render_html');
       expect(firstInstance).toBe(secondInstance);
       expect(talentUIRegistry.has('render_html')).toBe(true);
+      expect(talentUIRegistry.has('workspace_shell')).toBe(true);
     });
 
     it('re-registers after reset + resetRegisteredFlag', () => {
@@ -66,6 +68,7 @@ describe('TalentUIRegistry', () => {
       resetRegisteredFlag();
       registerDefaultTalents();
       expect(talentUIRegistry.has('render_html')).toBe(true);
+      expect(talentUIRegistry.has('workspace_shell')).toBe(true);
     });
   });
 });

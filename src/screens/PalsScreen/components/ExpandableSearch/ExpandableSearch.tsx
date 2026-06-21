@@ -1,4 +1,10 @@
-import React, {useState, useEffect, useCallback, useContext} from 'react';
+import React, {
+  useState,
+  useEffect,
+  useCallback,
+  useContext,
+  useRef,
+} from 'react';
 import {View, Animated, TextInput, TouchableOpacity} from 'react-native';
 
 import {observer} from 'mobx-react-lite';
@@ -10,24 +16,33 @@ import {L10nContext} from '../../../../utils';
 
 import {createStyles} from './styles';
 
-import {palStore} from '../../../../store/PalStore';
+import {palStore, type Pal} from '../../../../store';
 
 import type {PalsHubPal} from '../../../../types/palshub';
 
 interface ExpandableSearchProps {
   isExpanded: boolean;
   onToggle: () => void;
-  onSearchResults: (results: PalsHubPal[]) => void;
+  onSearchResults: (results: Array<PalsHubPal | Pal>) => void;
+  remoteEnabled?: boolean;
+  localSearchItems?: Pal[];
 }
 
 export const ExpandableSearch: React.FC<ExpandableSearchProps> = observer(
-  ({isExpanded, onToggle, onSearchResults}) => {
+  ({
+    isExpanded,
+    onToggle,
+    onSearchResults,
+    remoteEnabled = true,
+    localSearchItems = [],
+  }) => {
     const theme = useTheme();
     const styles = createStyles(theme);
     const l10n = useContext(L10nContext);
 
     const [searchQuery, setSearchQuery] = useState('');
     const [animatedHeight] = useState(new Animated.Value(0));
+    const hasClearedSearchRef = useRef(false);
 
     useEffect(() => {
       Animated.timing(animatedHeight, {
@@ -43,6 +58,25 @@ export const ExpandableSearch: React.FC<ExpandableSearchProps> = observer(
         return;
       }
 
+      if (!remoteEnabled) {
+        const query = searchQuery.trim().toLowerCase();
+        onSearchResults(
+          localSearchItems.filter(item =>
+            [
+              item.name,
+              item.description,
+              item.systemPrompt,
+              item.defaultModel,
+            ].some(
+              value =>
+                typeof value === 'string' &&
+                value.toLowerCase().includes(query),
+            ),
+          ),
+        );
+        return;
+      }
+
       try {
         await palStore.searchPalsHubPals({
           query: searchQuery,
@@ -53,13 +87,15 @@ export const ExpandableSearch: React.FC<ExpandableSearchProps> = observer(
         console.error('Search error:', error);
         onSearchResults([]);
       }
-    }, [searchQuery, onSearchResults]);
+    }, [localSearchItems, remoteEnabled, searchQuery, onSearchResults]);
 
     useEffect(() => {
       if (searchQuery.trim()) {
+        hasClearedSearchRef.current = false;
         const debounceTimer = setTimeout(performSearch, 300);
         return () => clearTimeout(debounceTimer);
-      } else {
+      } else if (!hasClearedSearchRef.current) {
+        hasClearedSearchRef.current = true;
         onSearchResults([]);
       }
     }, [searchQuery, performSearch, onSearchResults]);

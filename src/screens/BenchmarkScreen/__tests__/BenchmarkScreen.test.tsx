@@ -20,6 +20,7 @@ import {
 import {BenchmarkScreen} from '../BenchmarkScreen';
 
 import {benchmarkStore, modelStore, uiStore} from '../../../store';
+import {ROUTES} from '../../../utils/navigationConstants';
 import {mockLlamaContextParams} from '../../../../jest/fixtures/models';
 
 jest.mock('../../../api/benchmark', () => ({
@@ -126,6 +127,17 @@ describe('BenchmarkScreen', () => {
   });
 
   describe('Benchmark Execution', () => {
+    it('opens the iOS fit benchmark runner from the benchmark screen', () => {
+      const navigate = jest.fn();
+      const {getByTestId} = render(<BenchmarkScreen navigation={{navigate}} />);
+
+      fireEvent.press(getByTestId('open-fit-benchmark-runner-button'));
+
+      expect(navigate).toHaveBeenCalledWith(ROUTES.BENCHMARK_RUNNER, {
+        autostart: false,
+      });
+    });
+
     it('handles submission of benchmark results', async () => {
       const {getByTestId} = render(<BenchmarkScreen />);
 

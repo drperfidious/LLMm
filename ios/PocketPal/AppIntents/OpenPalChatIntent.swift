@@ -2,7 +2,7 @@
 //  OpenPalChatIntent.swift
 //  PocketPal
 //
-//  App Intent for opening a Pal's chat screen
+//  App Intent for opening an agent chat screen
 //
 
 import Foundation
@@ -10,12 +10,12 @@ import AppIntents
 
 @available(iOS 16.0, *)
 struct OpenPalChatIntent: AppIntent {
-    static var title: LocalizedStringResource = "Open Pal Chat"
-    static var description = IntentDescription("Open PocketPal and start chatting with a specific Pal")
+    static var title: LocalizedStringResource = "Open Agent Chat"
+    static var description = IntentDescription("Open LLMm and start chatting with a specific local AI agent")
     
     static var openAppWhenRun: Bool = true // Open the app
     
-    @Parameter(title: "Pal", description: "The Pal to chat with")
+    @Parameter(title: "Agent", description: "The agent to chat with")
     var pal: PalEntity
     
     @Parameter(title: "Message", description: "Optional message to prefill", default: nil)
@@ -31,7 +31,7 @@ struct OpenPalChatIntent: AppIntent {
     func perform() async throws -> some IntentResult {
         // Build deep link URL
         var urlComponents = URLComponents()
-        urlComponents.scheme = "pocketpal"
+        urlComponents.scheme = "llmm"
         urlComponents.host = "chat"
         
         var queryItems: [URLQueryItem] = [
@@ -68,4 +68,3 @@ enum OpenPalChatError: Error, LocalizedError {
         }
     }
 }
-

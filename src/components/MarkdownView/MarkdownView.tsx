@@ -4,7 +4,12 @@ import React, {useMemo} from 'react';
 import {marked} from 'marked';
 import {RenderHTMLSource} from 'react-native-render-html';
 
-marked.use({});
+import {preprocessMarkdownMath} from './math';
+
+marked.use({
+  breaks: true,
+  gfm: true,
+});
 
 interface MarkdownViewProps {
   markdownText: string;
@@ -28,15 +33,23 @@ const isEmptyContent = (content: string): boolean => {
  */
 export const MarkdownView: React.FC<MarkdownViewProps> = React.memo(
   ({markdownText, maxMessageWidth}) => {
-    const htmlContent = useMemo(
-      () => marked(markdownText) as string,
+    const normalizedMarkdown = useMemo(
+      () => markdownText.replace(/\r\n/g, '\n').trim(),
       [markdownText],
+    );
+    const mathAwareMarkdown = useMemo(
+      () => preprocessMarkdownMath(normalizedMarkdown),
+      [normalizedMarkdown],
+    );
+    const htmlContent = useMemo(
+      () => marked(mathAwareMarkdown) as string,
+      [mathAwareMarkdown],
     );
     const source = useMemo(() => ({html: htmlContent}), [htmlContent]);
 
     return (
       <View testID="markdown-content" style={{maxWidth: maxMessageWidth}}>
-        {!isEmptyContent(markdownText) && (
+        {!isEmptyContent(normalizedMarkdown) && (
           <RenderHTMLSource source={source} contentWidth={maxMessageWidth} />
         )}
       </View>

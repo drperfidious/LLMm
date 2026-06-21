@@ -78,6 +78,93 @@ function isQuantizedCacheType(cacheType: CacheType | string): boolean {
   );
 }
 
+function isTurboCacheType(cacheType: CacheType | string): boolean {
+  return (
+    cacheType === CacheType.TURBO4 ||
+    cacheType === CacheType.TURBO3 ||
+    cacheType === CacheType.TURBO2 ||
+    cacheType === 'turbo4' ||
+    cacheType === 'turbo3' ||
+    cacheType === 'turbo2'
+  );
+}
+
+function isTurboCompanionCacheType(cacheType: CacheType | string): boolean {
+  return (
+    cacheType === CacheType.F16 ||
+    cacheType === CacheType.Q8_0 ||
+    cacheType === 'f16' ||
+    cacheType === 'q8_0' ||
+    isTurboCacheType(cacheType)
+  );
+}
+
+function normaliseCacheType(cacheType: CacheType | string): string {
+  return String(cacheType).toLowerCase();
+}
+
+export function isTurboCachePairSafe(
+  cacheTypeK: CacheType | string,
+  cacheTypeV: CacheType | string,
+  backend: BackendType,
+): {safe: boolean; reason?: string} {
+  if (!isTurboCacheType(cacheTypeK) && !isTurboCacheType(cacheTypeV)) {
+    return {safe: true};
+  }
+
+  if (backend !== 'metal' && backend !== 'cpu') {
+    return {
+      safe: false,
+      reason: 'TurboQuant cache is only enabled for Metal/CPU in this fork',
+    };
+  }
+
+  if (
+    !isTurboCompanionCacheType(cacheTypeK) ||
+    !isTurboCompanionCacheType(cacheTypeV)
+  ) {
+    return {
+      safe: false,
+      reason: 'TurboQuant cache pairs must use f16, q8_0, turbo2, turbo3, or turbo4',
+    };
+  }
+
+  return {safe: true};
+}
+
+export function isFlashAttnCachePairSafe(
+  cacheTypeK: CacheType | string,
+  cacheTypeV: CacheType | string,
+  flashAttnType: FlashAttnType,
+  backend: BackendType,
+): {safe: boolean; reason?: string} {
+  if (flashAttnType === 'off') {
+    return {safe: true};
+  }
+
+  const turboPair = isTurboCachePairSafe(cacheTypeK, cacheTypeV, backend);
+  if (!turboPair.safe) {
+    return turboPair;
+  }
+
+  if (isTurboCacheType(cacheTypeK) || isTurboCacheType(cacheTypeV)) {
+    return {safe: true};
+  }
+
+  if (
+    backend === 'metal' &&
+    normaliseCacheType(cacheTypeK) !== normaliseCacheType(cacheTypeV)
+  ) {
+    return {
+      safe: false,
+      reason:
+        'Metal flash attention requires matching non-Turbo K/V cache types',
+    };
+  }
+
+  return {safe: true};
+}
+
 /**
  * Validates if cache_type_v is safe with the given flash attention configuration
  */
@@ -85,9 +172,23 @@ export function isCacheTypeVSafe(
   cacheTypeV: CacheType | string,
   flashAttnType: FlashAttnType,
   backend: BackendType,
+  cacheTypeK?: CacheType | string,
 ): {safe: boolean; reason?: string} {
   // Check if this is a quantized cache type
   const isQuantizedV = isQuantizedCacheType(cacheTypeV);
+  const isTurboV = isTurboCacheType(cacheTypeV);
+
+  if (cacheTypeK !== undefined) {
+    const pair = isFlashAttnCachePairSafe(
+      cacheTypeK,
+      cacheTypeV,
+      flashAttnType,
+      backend,
+    );
+    if (!pair.safe) {
+      return pair;
+    }
+  }
 
   if (!isQuantizedV) {
     // F16 and F32 are always safe regardless of flash attention or backend
@@ -104,6 +205,13 @@ export function isCacheTypeVSafe(
 
   // flash_attn: 'on' + quantized V = ✅ Safe (if backend supports FA)
   if (flashAttnType === 'on') {
+    if (isTurboV && backend !== 'metal' && backend !== 'cpu') {
+      return {
+        safe: false,
+        reason: 'TurboQuant cache is only enabled for Metal/CPU in this fork',
+      };
+    }
+
     // OpenCL doesn't support flash attention at all
     if (backend === 'opencl') {
       return {
@@ -147,6 +255,13 @@ export function isCacheTypeVSafe(
     };
   }
 
+  if (isTurboV && backend !== 'metal' && backend !== 'cpu') {
+    return {
+      safe: false,
+      reason: 'TurboQuant cache is only enabled for Metal/CPU in this fork',
+    };
+  }
+
   // Metal, CPU, BLAS + 'auto' + quantized V = ✅ Safe
   // These backends reliably support flash attention with 'auto'
   return {safe: true};
@@ -156,10 +271,30 @@ export function isCacheTypeVSafe(
  * Validates if cache_type_k is safe with the given flash attention configuration
  */
 export function isCacheTypeKSafe(
-  _cacheTypeK: CacheType | string,
+  cacheTypeK: CacheType | string,
   _flashAttnType: FlashAttnType,
-  _backend: BackendType,
+  backend: BackendType,
+  cacheTypeV?: CacheType | string,
 ): {safe: boolean; reason?: string} {
+  if (cacheTypeV !== undefined) {
+    const pair = isFlashAttnCachePairSafe(
+      cacheTypeK,
+      cacheTypeV,
+      _flashAttnType,
+      backend,
+    );
+    if (!pair.safe) {
+      return pair;
+    }
+  }
+
+  if (isTurboCacheType(cacheTypeK) && backend !== 'metal' && backend !== 'cpu') {
+    return {
+      safe: false,
+      reason: 'TurboQuant cache is only enabled for Metal/CPU in this fork',
+    };
+  }
+
   // Cache type K is generally safe with all flash attention modes
   // Only potential issue is block size alignment, which is model-specific
   // and not something we can validate at settings time
@@ -174,6 +309,7 @@ export function isCacheTypeKSafe(
 export function getAllowedCacheTypeVOptions(
   flashAttnType: FlashAttnType,
   backend: BackendType,
+  cacheTypeK?: CacheType | string,
 ): Array<{
   value: CacheType;
   label: string;
@@ -189,10 +325,18 @@ export function getAllowedCacheTypeVOptions(
     {value: CacheType.Q4_1, label: 'Q4_1'},
     {value: CacheType.Q4_0, label: 'Q4_0'},
     {value: CacheType.IQ4_NL, label: 'IQ4_NL'},
+    {value: CacheType.TURBO4, label: 'Turbo4'},
+    {value: CacheType.TURBO3, label: 'Turbo3'},
+    {value: CacheType.TURBO2, label: 'Turbo2'},
   ];
 
   return allOptions.map(option => {
-    const validation = isCacheTypeVSafe(option.value, flashAttnType, backend);
+    const validation = isCacheTypeVSafe(
+      option.value,
+      flashAttnType,
+      backend,
+      cacheTypeK,
+    );
     return {
       ...option,
       disabled: !validation.safe,
@@ -207,6 +351,7 @@ export function getAllowedCacheTypeVOptions(
 export function getAllowedCacheTypeKOptions(
   flashAttnType: FlashAttnType,
   backend: BackendType,
+  cacheTypeV?: CacheType | string,
 ): Array<{
   value: CacheType;
   label: string;
@@ -222,10 +367,18 @@ export function getAllowedCacheTypeKOptions(
     {value: CacheType.Q4_1, label: 'Q4_1'},
     {value: CacheType.Q4_0, label: 'Q4_0'},
     {value: CacheType.IQ4_NL, label: 'IQ4_NL'},
+    {value: CacheType.TURBO4, label: 'Turbo4'},
+    {value: CacheType.TURBO3, label: 'Turbo3'},
+    {value: CacheType.TURBO2, label: 'Turbo2'},
   ];
 
   return allOptions.map(option => {
-    const validation = isCacheTypeKSafe(option.value, flashAttnType, backend);
+    const validation = isCacheTypeKSafe(
+      option.value,
+      flashAttnType,
+      backend,
+      cacheTypeV,
+    );
     return {
       ...option,
       disabled: !validation.safe,

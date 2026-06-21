@@ -17,6 +17,7 @@ import {createStyles} from './styles';
 const EXPAND_DURATION_MS = 220;
 // Collapsed width = speaker half only; expanded adds divider (1) + chevron (26).
 const RIGHT_SIDE_WIDTH = 27;
+const COMPACT_RIGHT_SIDE_WIDTH = 0;
 
 const pickSpeakerIcon = (autoSpeakEnabled: boolean, isPlaying: boolean) => {
   if (isPlaying) {
@@ -31,10 +32,14 @@ const pickSpeakerIcon = (autoSpeakEnabled: boolean, isPlaying: boolean) => {
  * split-pill — speaker + divider + chevron — when active, playing, or when
  * setup is still needed. Hidden entirely when TTS is unavailable.
  */
-export const VoiceChip: React.FC = observer(() => {
+interface VoiceChipProps {
+  compact?: boolean;
+}
+
+export const VoiceChip: React.FC<VoiceChipProps> = observer(({compact}) => {
   const theme = useTheme();
   const l10n = useContext(L10nContext);
-  const styles = createStyles(theme);
+  const styles = createStyles(theme, {compact: !!compact});
 
   const isAvailable = ttsStore.isTTSAvailable;
   const currentVoice = ttsStore.currentVoice;
@@ -46,7 +51,7 @@ export const VoiceChip: React.FC = observer(() => {
   const hasVoice = currentVoice != null;
   // Expand when the user needs the whole control: active, playing, or
   // hasn't picked a voice yet (chevron is the only way into setup).
-  const shouldExpand = !hasVoice || autoSpeakEnabled || isPlaying;
+  const shouldExpand = !compact && (!hasVoice || autoSpeakEnabled || isPlaying);
 
   const progress = useRef(new Animated.Value(shouldExpand ? 1 : 0)).current;
 
@@ -92,12 +97,12 @@ export const VoiceChip: React.FC = observer(() => {
   // Icon goes from 50% (dimmed / "off") to 100% (live) as the pill opens.
   const iconOpacity = progress.interpolate({
     inputRange: [0, 1],
-    outputRange: [0.5, 1],
+    outputRange: [compact && isPlaying ? 1 : 0.5, 1],
   });
   const rightSideStyle = {
     width: progress.interpolate({
       inputRange: [0, 1],
-      outputRange: [0, RIGHT_SIDE_WIDTH],
+      outputRange: [0, compact ? COMPACT_RIGHT_SIDE_WIDTH : RIGHT_SIDE_WIDTH],
     }),
     opacity: progress,
   };
@@ -130,19 +135,23 @@ export const VoiceChip: React.FC = observer(() => {
         </Animated.View>
       </Pressable>
       <Animated.View style={[styles.pillRightSide, rightSideStyle]}>
-        <View style={styles.pillDivider} />
-        <Pressable
-          style={styles.pillSecondaryHalf}
-          onPress={handleSecondaryPress}
-          accessibilityRole="button"
-          accessibilityLabel={l10n.voiceAndSpeech.openSettingsLabel}
-          testID="voicechip-secondary">
-          <ChevronDownIcon
-            width={14}
-            height={14}
-            stroke={theme.colors.onSurfaceVariant}
-          />
-        </Pressable>
+        {!compact && (
+          <>
+            <View style={styles.pillDivider} />
+            <Pressable
+              style={styles.pillSecondaryHalf}
+              onPress={handleSecondaryPress}
+              accessibilityRole="button"
+              accessibilityLabel={l10n.voiceAndSpeech.openSettingsLabel}
+              testID="voicechip-secondary">
+              <ChevronDownIcon
+                width={14}
+                height={14}
+                stroke={theme.colors.onSurfaceVariant}
+              />
+            </Pressable>
+          </>
+        )}
       </Animated.View>
     </Animated.View>
   );

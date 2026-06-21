@@ -152,6 +152,59 @@ describe('runAgent', () => {
     expect((finished[0] as any).outcome.responseContent).toBe('4');
   });
 
+  it('preserves stop tokens on initial and follow-up agent turns', async () => {
+    const engine = makeScriptedEngine({
+      scripts: [
+        {
+          tokens: [],
+          result: {
+            text: '',
+            content: '',
+            tool_calls: [
+              {
+                id: 'call-0',
+                type: 'function',
+                function: {name: 'calculate', arguments: '{"expr":"2+2"}'},
+              },
+            ],
+          },
+        },
+        {
+          tokens: [],
+          result: {text: 'The answer is 4', content: 'The answer is 4'},
+        },
+      ],
+    });
+    const calculate = makeTalent('calculate', () => ({
+      type: 'text',
+      summary: '4',
+    }));
+
+    await collect(
+      runAgent({
+        engine,
+        initialParams: {
+          ...baseParams,
+          stop: ['<|end|>', '<|assistant|>'],
+        } as ApiCompletionParams,
+        allowedTalentNames: ['calculate'],
+        talentLookup: name => (name === 'calculate' ? calculate : undefined),
+        messageId: 'msg',
+        triggerMarkers: [],
+      }),
+    );
+
+    expect(engine.completion).toHaveBeenCalledTimes(2);
+    expect((engine.completion as jest.Mock).mock.calls[0][0].stop).toEqual([
+      '<|end|>',
+      '<|assistant|>',
+    ]);
+    expect((engine.completion as jest.Mock).mock.calls[1][0].stop).toEqual([
+      '<|end|>',
+      '<|assistant|>',
+    ]);
+  });
+
   it('#3 tool call but second turn yields no further tool_calls → run finishes after follow-up', async () => {
     // Note: the runner does not consult `requiresModelResponse`; it always
     // performs a follow-up turn after tool calls and only exits the loop
@@ -358,6 +411,53 @@ describe('runAgent', () => {
     expect(tcf).toBeDefined();
     expect(tcf.outcome.result.type).toBe('error');
     expect(tcf.outcome.responseContent).toMatch(/invalid JSON/);
+  });
+
+  it('non-object JSON args → tool_call_finished with error outcome before execute', async () => {
+    const engine = makeScriptedEngine({
+      scripts: [
+        {
+          tokens: [],
+          result: {
+            text: '',
+            content: '',
+            tool_calls: [
+              {
+                id: 'c0',
+                type: 'function',
+                function: {name: 'calculate', arguments: '"2+2"'},
+              },
+            ],
+          },
+        },
+        {
+          tokens: [{content: 'sorry'}],
+          result: {text: 'sorry', content: 'sorry'},
+        },
+      ],
+    });
+    const execute = jest.fn(() => ({
+      type: 'text' as const,
+      summary: 'ignored',
+    }));
+    const calculate = makeTalent('calculate', execute);
+    const events = await collect(
+      runAgent({
+        engine,
+        initialParams: baseParams,
+        allowedTalentNames: ['calculate'],
+        talentLookup: () => calculate,
+        messageId: 'msg',
+        triggerMarkers: [],
+      }),
+    );
+    const tcf = events.find(e => e.type === 'tool_call_finished') as Extract<
+      AgentEvent,
+      {type: 'tool_call_finished'}
+    >;
+    expect(execute).not.toHaveBeenCalled();
+    expect(tcf.outcome.result.type).toBe('error');
+    expect(tcf.outcome.responseContent).toMatch(/must be a JSON object/);
   });
 
   it('#7 unknown talent (not in registry) → outcome.result.type === error', async () => {
@@ -1057,6 +1157,211 @@ describe('runAgent', () => {
     expect(finishedIdx).toHaveLength(2);
     expect(startedIdx[0]).toBeLessThan(finishedIdx[0]);
     expect(startedIdx[1]).toBeLessThan(finishedIdx[1]);
+  });
+
+  it('executes strict text-wrapped tool calls when native tool_calls are absent', async () => {
+    const engine = makeScriptedEngine({
+      scripts: [
+        {
+          tokens: [{content: '<tool_call>'}],
+          result: {
+            text: '<tool_call>{"name":"calculate","arguments":{"expr":"2+2"}}</tool_call>',
+            content:
+              '<tool_call>{"name":"calculate","arguments":{"expr":"2+2"}}</tool_call>',
+          },
+        },
+        {
+          tokens: [{content: 'The answer is 4'}],
+          result: {text: 'The answer is 4', content: 'The answer is 4'},
+        },
+      ],
+    });
+    const execute = jest.fn(() => ({
+      type: 'text' as const,
+      summary: '4',
+    }));
+    const calculate = makeTalent('calculate', execute);
+
+    const events = await collect(
+      runAgent({
+        engine,
+        initialParams: baseParams,
+        allowedTalentNames: ['calculate'],
+        talentLookup: name => (name === 'calculate' ? calculate : undefined),
+        messageId: 'msg',
+        triggerMarkers: [],
+      }),
+    );
+
+    expect(execute).toHaveBeenCalledWith({expr: '2+2'});
+    const finished = events.filter(e => e.type === 'tool_call_finished');
+    expect(finished).toHaveLength(1);
+    expect((finished[0] as any).outcome.responseContent).toBe('4');
+    expect(events.filter(e => e.type === 'step_started')).toHaveLength(2);
+  });
+
+  it('does not parse or execute tool calls when enableToolCalls=false', async () => {
+    const engine = makeScriptedEngine({
+      scripts: [
+        {
+          tokens: [{content: '<tool_call>'}],
+          result: {
+            text: '<tool_call>{"name":"calculate","arguments":{"expr":"2+2"}}</tool_call>',
+            content:
+              '<tool_call>{"name":"calculate","arguments":{"expr":"2+2"}}</tool_call>',
+            tool_calls: [
+              {
+                id: 'c0',
+                type: 'function',
+                function: {name: 'calculate', arguments: '{"expr":"2+2"}'},
+              },
+            ],
+          },
+        },
+      ],
+    });
+    const execute = jest.fn(() => ({
+      type: 'text' as const,
+      summary: '4',
+    }));
+    const calculate = makeTalent('calculate', execute);
+
+    const events = await collect(
+      runAgent({
+        engine,
+        initialParams: baseParams,
+        allowedTalentNames: ['calculate'],
+        talentLookup: name => (name === 'calculate' ? calculate : undefined),
+        messageId: 'msg',
+        triggerMarkers: ['<tool_call>'],
+        enableToolCalls: false,
+      }),
+    );
+
+    expect(execute).not.toHaveBeenCalled();
+    expect(events.filter(e => e.type === 'tool_call_finished')).toHaveLength(0);
+    const stepFinished = events.find(
+      (e): e is Extract<AgentEvent, {type: 'step_finished'}> =>
+        e.type === 'step_finished',
+    );
+    expect(stepFinished?.toolCalls).toBeUndefined();
+  });
+
+  it('caps repeated identical tool execution and returns error outcomes', async () => {
+    const engine = makeScriptedEngine({
+      scripts: Array.from({length: 4}, (_, i) => ({
+        tokens: [],
+        result: {
+          text: '',
+          content: '',
+          tool_calls: [
+            {
+              id: `c${i}`,
+              type: 'function' as const,
+              function: {name: 'datetime', arguments: '{}'},
+            },
+          ],
+        },
+      })),
+    });
+    const execute = jest.fn(() => ({
+      type: 'text' as const,
+      summary: 'now',
+    }));
+    const datetime = makeTalent('datetime', execute);
+
+    const events = await collect(
+      runAgent({
+        engine,
+        initialParams: baseParams,
+        allowedTalentNames: ['datetime'],
+        talentLookup: name => (name === 'datetime' ? datetime : undefined),
+        messageId: 'msg',
+        triggerMarkers: [],
+        maxTurns: 4,
+      }),
+    );
+
+    expect(execute).toHaveBeenCalledTimes(1);
+    const finished = events.filter(
+      (e): e is Extract<AgentEvent, {type: 'tool_call_finished'}> =>
+        e.type === 'tool_call_finished',
+    );
+    expect(finished).toHaveLength(4);
+    expect(finished[0].outcome.result.type).toBe('text');
+    expect(finished[1].outcome.result.type).toBe('error');
+    expect(finished[1].outcome.responseContent).toMatch(/repeated tool call/);
+    expect(finished[2].outcome.result.type).toBe('error');
+    expect(finished[3].outcome.result.type).toBe('error');
+  });
+
+  it('blocks a duplicate fenced web_search instead of fetching the same result twice', async () => {
+    const webSearchArgs = {
+      query: 'Welland Ontario news latest py country:CA',
+      count: 10,
+      freshness: 'py',
+      country: 'CA',
+    };
+    const toolCallJson = JSON.stringify({
+      name: 'web_search',
+      arguments: webSearchArgs,
+    });
+    const engine = makeScriptedEngine({
+      scripts: [
+        {
+          tokens: [],
+          result: {
+            text: `<tool_call>${toolCallJson}</tool_call>`,
+            content: '',
+          },
+        },
+        {
+          tokens: [],
+          result: {
+            text: `\`\`\`json\n${toolCallJson}\n\`\`\``,
+            content: '',
+          },
+        },
+        {
+          tokens: [],
+          result: {
+            text: 'Here are the latest Welland stories.',
+            content: 'Here are the latest Welland stories.',
+          },
+        },
+      ],
+    });
+    const execute = jest.fn(() => ({
+      type: 'text' as const,
+      summary:
+        'Top results: Welland Tribune weekly roundup; Niagara This Week arrest story.',
+    }));
+    const webSearch = makeTalent('web_search', execute);
+
+    const events = await collect(
+      runAgent({
+        engine,
+        initialParams: baseParams,
+        allowedTalentNames: ['web_search'],
+        talentLookup: name => (name === 'web_search' ? webSearch : undefined),
+        messageId: 'msg',
+        triggerMarkers: ['<tool_call>'],
+        maxTurns: 3,
+      }),
+    );
+
+    expect(execute).toHaveBeenCalledTimes(1);
+    const finished = events.filter(
+      (e): e is Extract<AgentEvent, {type: 'tool_call_finished'}> =>
+        e.type === 'tool_call_finished',
+    );
+    expect(finished).toHaveLength(2);
+    expect(finished[0].outcome.result.type).toBe('text');
+    expect(finished[1].outcome.toolName).toBe('web_search');
+    expect(finished[1].outcome.result.type).toBe('error');
+    expect(finished[1].outcome.responseContent).toContain(
+      'Use the previous tool result to answer the user',
+    );
   });
 
   // ---------- Tool-call-progress signal source ----------

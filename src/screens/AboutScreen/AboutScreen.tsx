@@ -27,6 +27,11 @@ import {Sheet, TextInput} from '../../components';
 import {useTheme} from '../../hooks';
 import {createStyles} from './styles';
 import {L10nContext} from '../../utils';
+import {
+  openReportEmailDraft,
+  REPORT_RECIPIENT_EMAIL,
+  ReportEmailResult,
+} from '../../utils/reportEmail';
 
 const GithubButtonIcon = ({color}: {color: string}) => (
   <GithubIcon stroke={color} />
@@ -72,6 +77,37 @@ export const AboutScreen: React.FC = () => {
     );
   };
 
+  const clearFeedbackForm = () => {
+    setUseCase('');
+    setFeatureRequests('');
+    setGeneralFeedback('');
+    setUsageFrequency('');
+  };
+
+  const showEmailFallbackAlert = (
+    result: ReportEmailResult,
+    onPress?: () => void,
+  ) => {
+    if (result.openedMailApp) {
+      Alert.alert(
+        'Email draft opened',
+        `Server feedback failed, so a prefilled email to ${REPORT_RECIPIENT_EMAIL} was opened. Send it to forward the report.${
+          result.copiedBodyToClipboard
+            ? ' The full report was copied to your clipboard because it was too large for the email link.'
+            : ''
+        }`,
+        [{text: l10n.common.ok, onPress}],
+      );
+      return;
+    }
+
+    Alert.alert(
+      'Report copied',
+      `Server feedback failed and no email app opened. The full report was copied to your clipboard; paste it into an email to ${REPORT_RECIPIENT_EMAIL}.`,
+      [{text: l10n.common.ok, onPress}],
+    );
+  };
+
   const handleSubmit = async () => {
     if (!useCase && !featureRequests && !generalFeedback) {
       Alert.alert(l10n.feedback.validation.required);
@@ -79,24 +115,29 @@ export const AboutScreen: React.FC = () => {
     }
 
     setIsSubmitting(true);
+    const feedbackPayload = {
+      useCase,
+      featureRequests,
+      generalFeedback,
+      usageFrequency,
+    };
+
     try {
-      await submitFeedback({
-        useCase,
-        featureRequests,
-        generalFeedback,
-        usageFrequency,
-      });
+      await submitFeedback(feedbackPayload);
       Alert.alert('Success', l10n.feedback.success);
       setShowFeedback(false);
-      // Clear form
-      setUseCase('');
-      setFeatureRequests('');
-      setGeneralFeedback('');
-      setUsageFrequency('');
+      clearFeedbackForm();
     } catch (error) {
-      const errorMessage =
-        error instanceof Error ? error.message : l10n.feedback.error.general;
-      Alert.alert('Error', errorMessage);
+      const emailResult = await openReportEmailDraft({
+        reportType: 'feedback',
+        subject: 'LLMm feedback report',
+        payload: feedbackPayload,
+        submissionError: error,
+      });
+      showEmailFallbackAlert(emailResult, () => {
+        setShowFeedback(false);
+        clearFeedbackForm();
+      });
     } finally {
       setIsSubmitting(false);
     }
@@ -109,7 +150,7 @@ export const AboutScreen: React.FC = () => {
           <View style={styles.header}>
             <View style={styles.headerContent}>
               <Text variant="titleLarge" style={styles.title}>
-                PocketPal AI
+                LLMm
               </Text>
               <Text variant="bodyMedium" style={styles.description}>
                 {l10n.about.description}

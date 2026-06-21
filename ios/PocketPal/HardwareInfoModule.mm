@@ -35,7 +35,6 @@ RCT_EXPORT_METHOD(getGPUInfo:(RCTPromiseResolveBlock)resolve
 
     NSString *gpuName = device ? device.name : @"Unknown";
     NSString *gpuType = @"Apple GPU (Metal)";
-    BOOL supportsMetal = device != nil;
 
     NSDictionary *result = @{
       @"renderer": gpuName,
@@ -51,6 +50,73 @@ RCT_EXPORT_METHOD(getGPUInfo:(RCTPromiseResolveBlock)resolve
     resolve(result);
   } @catch (NSException *exception) {
     reject(@"error_getting_gpu_info", @"Could not retrieve GPU info", nil);
+  }
+}
+
+RCT_EXPORT_METHOD(getMetalInfo:(RCTPromiseResolveBlock)resolve
+                  rejecter:(RCTPromiseRejectBlock)reject)
+{
+  @try {
+    id<MTLDevice> device = MTLCreateSystemDefaultDevice();
+
+    if (!device) {
+      resolve(@{
+        @"isSupported": @NO,
+        @"reason": @"Metal device unavailable",
+      });
+      return;
+    }
+
+    BOOL supportsFamilyApple7 = [device supportsFamily:MTLGPUFamilyApple7];
+    BOOL supportsFamilyApple8 = [device supportsFamily:MTLGPUFamilyApple8];
+    BOOL supportsFamilyMetal3 = NO;
+    uint64_t recommendedMaxWorkingSetSize = 0;
+
+    if (@available(iOS 16.0, *)) {
+      supportsFamilyMetal3 = [device supportsFamily:MTLGPUFamilyMetal3];
+      recommendedMaxWorkingSetSize = device.recommendedMaxWorkingSetSize;
+    }
+
+    NSInteger highestAppleFamily = 0;
+    for (NSInteger family = (NSInteger)MTLGPUFamilyApple9; family >= (NSInteger)MTLGPUFamilyApple1; family--) {
+      if ([device supportsFamily:(MTLGPUFamily)family]) {
+        highestAppleFamily = family - (NSInteger)MTLGPUFamilyApple1 + 1;
+        break;
+      }
+    }
+
+    NSString *reason = nil;
+    BOOL isSupported = supportsFamilyApple7;
+    if (@available(iOS 16.0, *)) {
+      isSupported = isSupported && supportsFamilyMetal3;
+    }
+    if (!isSupported) {
+      reason = @"Metal family requirements not met";
+    }
+
+    NSMutableDictionary *result = [@{
+      @"isSupported": @(isSupported),
+      @"name": device.name ?: @"Unknown",
+      @"currentAllocatedSize": @((uint64_t)device.currentAllocatedSize),
+      @"maxBufferLength": @((uint64_t)device.maxBufferLength),
+      @"maxThreadgroupMemoryLength": @((NSUInteger)device.maxThreadgroupMemoryLength),
+      @"hasUnifiedMemory": @(device.hasUnifiedMemory),
+      @"supportsFamilyApple7": @(supportsFamilyApple7),
+      @"supportsFamilyApple8": @(supportsFamilyApple8),
+      @"supportsFamilyMetal3": @(supportsFamilyMetal3),
+      @"highestAppleFamily": @(highestAppleFamily),
+    } mutableCopy];
+
+    if (recommendedMaxWorkingSetSize > 0) {
+      result[@"recommendedMaxWorkingSetSize"] = @(recommendedMaxWorkingSetSize);
+    }
+    if (reason) {
+      result[@"reason"] = reason;
+    }
+
+    resolve(result);
+  } @catch (NSException *exception) {
+    reject(@"error_getting_metal_info", @"Could not retrieve Metal info", nil);
   }
 }
 
@@ -150,4 +216,3 @@ RCT_EXPORT_METHOD(purgeNativeAllocator:(RCTPromiseResolveBlock)resolve
 }
 
 @end
-

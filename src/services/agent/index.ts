@@ -8,5 +8,9 @@ export type {
 export {initialAgentUiState} from './AgentRunner.types';
 export {agentStateReducer} from './agentStateReducer';
 export {runAgent} from './AgentRunner';
+export {
+  detectLikelyToolIntents,
+  resolveToolIntentSystemMessages,
+} from './toolIntentHints';
 export {createTriggerMarkerCache} from './triggerMarkers';
 export type {TriggerMarkerCache} from './triggerMarkers';

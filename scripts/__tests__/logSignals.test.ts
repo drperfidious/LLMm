@@ -1,7 +1,7 @@
 /**
  * Unit tests for the pure functions in `src/__automation__/logSignals.ts`:
  *   - deriveLogSignals(lines): parses native log lines into a structured payload.
- *   - deriveEffectiveBackend(signals): maps the payload to a 4-state enum.
+ *   - deriveEffectiveBackend(signals): maps the payload to a closed backend enum.
  *
  * Fixtures are modelled on real native-log excerpts from llama.rn's
  * `cpp/ggml-opencl/ggml-opencl.cpp` init/load paths. BenchmarkRunnerScreen
@@ -9,8 +9,10 @@
  */
 
 import {
+  BENCH_LOG_RE,
   deriveEffectiveBackend,
   deriveLogSignals,
+  requestSatisfiedBy,
 } from '../../src/__automation__/logSignals';
 
 // -----------------------------------------------------------------------------
@@ -65,6 +67,27 @@ const PARTIAL_OFFLOAD_LINES = [
   'I/llama_model_load: load_tensors: offloaded 22/28 layers to GPU',
 ];
 
+/**
+ * Canonical iOS Metal init + full GPU offload. These strings mirror the
+ * llama.cpp Metal call sites used by llama.rn on iOS.
+ */
+const METAL_FULL_OFFLOAD_LINES = [
+  'llama_model_load_from_file_impl: using device Metal (Apple A16 GPU) (0000) - 4096 MiB free',
+  'lm_ggml_backend_metal_log_allocated_size: allocated buffer, size =  512.00 MiB, ( 512.00 / 4096.00)',
+  'load_tensors:          CPU model buffer size =   166.92 MiB',
+  'load_tensors:        Metal model buffer size =  1002.15 MiB',
+  'load_tensors: offloaded 28/28 layers to GPU',
+  'llama_kv_cache:      Metal KV buffer size =    8.50 MiB',
+  'llama_context:      Metal compute buffer size =  296.05 MiB',
+];
+
+const METAL_PARTIAL_OFFLOAD_LINES = [
+  'llama_model_load_from_file_impl: using device Metal (Apple A16 GPU) (0000) - 4096 MiB free',
+  'load_tensors:          CPU model buffer size =   400.00 MiB',
+  'load_tensors:        Metal model buffer size =   600.00 MiB',
+  'load_tensors: offloaded 22/28 layers to GPU',
+];
+
 // -----------------------------------------------------------------------------
 // deriveLogSignals
 // -----------------------------------------------------------------------------
@@ -78,6 +101,9 @@ describe('deriveLogSignals', () => {
       adreno_gen: null,
       large_buffer_enabled: false,
       large_buffer_unsupported: false,
+      metal_init: false,
+      metal_device_name: null,
+      metal_allocated_mib: null,
       hexagon_init: false,
       hexagon_device_name: null,
       offloaded_layers: null,
@@ -201,6 +227,29 @@ describe('deriveLogSignals', () => {
     ]);
     expect(signals.large_buffer_unsupported).toBe(true);
   });
+
+  it('parses Metal init, allocation, offload counts, and buffers', () => {
+    const signals = deriveLogSignals(METAL_FULL_OFFLOAD_LINES);
+    expect(signals.metal_init).toBe(true);
+    expect(signals.metal_device_name).toBe('Apple A16 GPU');
+    expect(signals.metal_allocated_mib).toBe(512);
+    expect(signals.offloaded_layers).toBe(28);
+    expect(signals.total_layers).toBe(28);
+    expect(signals.memory_buffers.weights_mib).toMatchObject({
+      CPU: 166.92,
+      Metal: 1002.15,
+    });
+    expect(signals.memory_buffers.kv_cache_mib).toEqual({Metal: 8.5});
+    expect(signals.memory_buffers.compute_mib).toEqual({Metal: 296.05});
+    expect(signals.opencl_init).toBe(false);
+    expect(signals.hexagon_init).toBe(false);
+  });
+
+  it('captures Metal lines with the app-side native-log prefilter', () => {
+    expect(
+      METAL_FULL_OFFLOAD_LINES.every(line => BENCH_LOG_RE.test(line)),
+    ).toBe(true);
+  });
 });
 
 // -----------------------------------------------------------------------------
@@ -268,6 +317,25 @@ describe('deriveEffectiveBackend', () => {
     ]);
     expect(signals.opencl_init).toBe(false);
     expect(deriveEffectiveBackend(signals)).toBe('cpu');
+  });
+
+  it('returns "metal" on full Metal offload', () => {
+    expect(
+      deriveEffectiveBackend(deriveLogSignals(METAL_FULL_OFFLOAD_LINES)),
+    ).toBe('metal');
+  });
+
+  it('returns "cpu+metal-partial" when offloaded < total on Metal', () => {
+    expect(
+      deriveEffectiveBackend(deriveLogSignals(METAL_PARTIAL_OFFLOAD_LINES)),
+    ).toBe('cpu+metal-partial');
+  });
+
+  it('returns "unknown" when Metal initialized but no layer counts were seen', () => {
+    const signals = deriveLogSignals([
+      'llama_model_load_from_file_impl: using device Metal (Apple A16 GPU) (0000) - 4096 MiB free',
+    ]);
+    expect(deriveEffectiveBackend(signals)).toBe('unknown');
   });
 });
 
@@ -416,6 +484,18 @@ describe('deriveLogSignals — memory_buffers', () => {
     });
   });
 
+  it('parses split CPU + Metal weights from llm_load_tensors lines', () => {
+    const signals = deriveLogSignals([
+      'llm_load_tensors:          CPU model buffer size =   166.92 MiB',
+      'llm_load_tensors:        Metal model buffer size =  1002.15 MiB',
+    ]);
+    expect(signals.memory_buffers.weights_mib).toEqual({
+      CPU: 166.92,
+      Metal: 1002.15,
+    });
+    expect(signals.memory_buffers.weights_total_mib).toBeCloseTo(1169.07, 2);
+  });
+
   it('parses Hexagon multi-session split with REPACK overhead', () => {
     const signals = deriveLogSignals([
       'load_tensors:          CPU model buffer size =   189.42 MiB',
@@ -471,5 +551,21 @@ describe('deriveLogSignals — memory_buffers', () => {
     expect(signals.memory_buffers.kv_cache_total_mib).toBeCloseTo(8.5, 2);
     expect(signals.memory_buffers.compute_total_mib).toBeCloseTo(296.05, 2);
     expect(signals.memory_buffers.total_mib).toBeCloseTo(987.15, 2);
+  });
+});
+
+// -----------------------------------------------------------------------------
+// requestSatisfiedBy
+// -----------------------------------------------------------------------------
+
+describe('requestSatisfiedBy', () => {
+  it('accepts Metal as a satisfied gpu request', () => {
+    expect(requestSatisfiedBy('gpu', 'metal')).toBe(true);
+    expect(requestSatisfiedBy('gpu', 'cpu+metal-partial')).toBe(true);
+  });
+
+  it('rejects Metal for non-gpu requests', () => {
+    expect(requestSatisfiedBy('cpu', 'metal')).toBe(false);
+    expect(requestSatisfiedBy('hexagon', 'metal')).toBe(false);
   });
 });

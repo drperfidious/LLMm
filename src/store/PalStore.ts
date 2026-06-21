@@ -498,6 +498,21 @@ class PalStore {
 
   // PalsHub methods
   searchPalsHubPals = async (filters: any = {}) => {
+    if (!palsHubService.isConfigured()) {
+      runInAction(() => {
+        this.cachedPalsHubPals = [];
+        this.isLoadingPalsHub = false;
+        this.syncState = {status: 'idle'};
+      });
+      return {
+        pals: [],
+        total_count: 0,
+        page: 1,
+        limit: filters.limit || 20,
+        has_more: false,
+      };
+    }
+
     try {
       runInAction(() => {
         this.isLoadingPalsHub = true;
@@ -536,6 +551,21 @@ class PalStore {
   };
 
   loadUserLibrary = async () => {
+    if (!palsHubService.isConfigured()) {
+      runInAction(() => {
+        this.userLibrary = [];
+        this.isLoadingPalsHub = false;
+        this.syncState = {status: 'idle'};
+      });
+      return {
+        pals: [],
+        total_count: 0,
+        page: 1,
+        limit: 20,
+        has_more: false,
+      };
+    }
+
     try {
       runInAction(() => {
         this.isLoadingPalsHub = true;
@@ -574,6 +604,21 @@ class PalStore {
   };
 
   loadUserCreatedPals = async () => {
+    if (!palsHubService.isConfigured()) {
+      runInAction(() => {
+        this.userCreatedPals = [];
+        this.isLoadingPalsHub = false;
+        this.syncState = {status: 'idle'};
+      });
+      return {
+        pals: [],
+        total_count: 0,
+        page: 1,
+        limit: 20,
+        has_more: false,
+      };
+    }
+
     try {
       runInAction(() => {
         this.isLoadingPalsHub = true;

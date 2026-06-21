@@ -160,6 +160,11 @@ const SUPERTONIC_VOICE: Voice = {
   gender: 'f',
 };
 
+const makeSupertonicInferenceError = () =>
+  new Error(
+    '[Supertonic][Inference] estimateVector step 0 error: Non-zero status code returned while running Mul node. Status Message: BroadcastIterator axis == 1 was false. 1000 by 1934',
+  );
+
 const GIB = 1024 * 1024 * 1024;
 const flush = () => new Promise(r => setImmediate(r));
 
@@ -456,6 +461,28 @@ describe('TTSStore', () => {
 
       expect(mockSupertonicPlay).toHaveBeenCalled();
       expect(store.playbackState.mode).toBe('idle');
+      expect(store.currentVoice).toEqual(SUPERTONIC_VOICE);
+    });
+
+    it('disables Supertonic after a native inference failure', async () => {
+      const store = await makeStore();
+      const releaseSpy = jest
+        .spyOn(ttsRuntime, 'release')
+        .mockResolvedValue(undefined);
+      store.setCurrentVoice(SUPERTONIC_VOICE);
+      store.setAutoSpeak(true);
+      mockSupertonicPlay.mockRejectedValueOnce(makeSupertonicInferenceError());
+
+      await expect(store.play('msg-1', 'hello')).resolves.toBeUndefined();
+
+      expect(mockSupertonicPlay).toHaveBeenCalled();
+      expect(store.playbackState.mode).toBe('idle');
+      expect(store.currentVoice).toBeNull();
+      expect(store.autoSpeakEnabled).toBe(false);
+      expect(store.supertonicDownloadError).toMatch(/Supertonic speech failed/);
+      expect(releaseSpy).toHaveBeenCalled();
+
+      releaseSpy.mockRestore();
     });
 
     it('uses voiceOverride when provided', async () => {
@@ -603,10 +630,22 @@ describe('TTSStore', () => {
       expect(mockSystemPlay).not.toHaveBeenCalled();
     });
 
-    it('Supertonic streaming finalize rejection is caught and state resets to idle', async () => {
+    it('Supertonic streaming inference rejection disables autospeak and resets state', async () => {
       const store = await makeStore();
+      const releaseSpy = jest
+        .spyOn(ttsRuntime, 'release')
+        .mockResolvedValue(undefined);
       store.setCurrentVoice(SUPERTONIC_VOICE);
       store.setAutoSpeak(true);
+      mockSupertonicPlayStreaming.mockImplementationOnce(() => {
+        const handle: MockHandle = {
+          appendText: jest.fn(),
+          finalize: jest.fn().mockRejectedValue(makeSupertonicInferenceError()),
+          cancel: jest.fn().mockResolvedValue(undefined),
+        };
+        lastSupertonicHandle = handle;
+        return handle;
+      });
 
       store.onAssistantMessageStart('msg-1');
       expect(mockSupertonicPlayStreaming).toHaveBeenCalled();
@@ -616,6 +655,12 @@ describe('TTSStore', () => {
 
       expect(lastSupertonicHandle!.finalize).toHaveBeenCalled();
       expect(store.playbackState.mode).toBe('idle');
+      expect(store.currentVoice).toBeNull();
+      expect(store.autoSpeakEnabled).toBe(false);
+      expect(store.supertonicDownloadError).toMatch(/Supertonic speech failed/);
+      expect(releaseSpy).toHaveBeenCalled();
+
+      releaseSpy.mockRestore();
     });
   });
 

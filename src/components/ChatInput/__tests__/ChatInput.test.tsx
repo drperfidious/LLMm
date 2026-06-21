@@ -9,7 +9,7 @@ import {l10n} from '../../../locales';
 import {UserContext} from '../../../utils';
 import {ChatInput} from '../ChatInput';
 import {render} from '../../../../jest/test-utils';
-import {palStore, chatSessionStore, modelStore} from '../../../store';
+import {palStore, chatSessionStore, modelStore, ttsStore} from '../../../store';
 import ReactNativeHapticFeedback from 'react-native-haptic-feedback';
 
 // Mock react-native-image-picker
@@ -23,6 +23,17 @@ jest.spyOn(Alert, 'alert');
 const renderScrollable = () => <ScrollView />;
 
 describe('input', () => {
+  beforeEach(() => {
+    runInAction(() => {
+      chatSessionStore.setChatMode('chat');
+      ttsStore.userTTSOverride = null;
+      ttsStore.deviceMeetsMemory = false;
+      ttsStore.currentVoice = null;
+      ttsStore.autoSpeakEnabled = false;
+      ttsStore.playbackState = {mode: 'idle'};
+    });
+  });
+
   it('send button', () => {
     expect.assertions(2);
     // Set up an active model for the test
@@ -309,25 +320,111 @@ describe('input', () => {
     expect(plusButton.props.accessibilityState.disabled).toBe(false);
   });
 
-  it('shows pal selector button', () => {
+  it('shows workspace menu button instead of the old agent selector shortcut', () => {
     expect.assertions(1);
     const onSendPress = jest.fn();
-    const onPalBtnPress = jest.fn();
     const {getByLabelText} = render(
       <UserContext.Provider value={user}>
         <ChatInput
           {...{
             onSendPress,
-            onPalBtnPress,
             sendButtonVisibilityMode: 'editing',
           }}
         />
       </UserContext.Provider>,
     );
 
-    const palButton = getByLabelText('Select Pal');
-    fireEvent.press(palButton);
-    expect(onPalBtnPress).toHaveBeenCalledTimes(1);
+    expect(getByLabelText('Chat workspace menu')).toBeTruthy();
+  });
+
+  it('renders Chat/Agent mode toggle and switches to Agent mode', () => {
+    expect.assertions(3);
+    const onSendPress = jest.fn();
+    const {getByTestId} = render(
+      <UserContext.Provider value={user}>
+        <ChatInput
+          {...{
+            onSendPress,
+            sendButtonVisibilityMode: 'editing',
+          }}
+        />
+      </UserContext.Provider>,
+    );
+
+    expect(getByTestId('chat-mode-toggle')).toBeTruthy();
+    expect(
+      getByTestId('chat-mode-chat').props.accessibilityState.selected,
+    ).toBe(true);
+    fireEvent.press(getByTestId('chat-mode-agent'));
+    expect(chatSessionStore.chatMode).toBe('agent');
+  });
+
+  it('disables Chat/Agent mode toggle while streaming', () => {
+    expect.assertions(2);
+    const onSendPress = jest.fn();
+    const {getByTestId} = render(
+      <UserContext.Provider value={user}>
+        <ChatInput
+          {...{
+            onSendPress,
+            isStreaming: true,
+            sendButtonVisibilityMode: 'editing',
+          }}
+        />
+      </UserContext.Provider>,
+    );
+
+    expect(
+      getByTestId('chat-mode-agent').props.accessibilityState.disabled,
+    ).toBe(true);
+    fireEvent.press(getByTestId('chat-mode-agent'));
+    expect(chatSessionStore.chatMode).toBe('chat');
+  });
+
+  it('hides idle voice chip in Agent mode to keep Think controls clear', () => {
+    runInAction(() => {
+      chatSessionStore.setChatMode('agent');
+      ttsStore.userTTSOverride = true;
+      ttsStore.currentVoice = {engine: 'kitten', id: 'voice-1', name: 'Voice'};
+      ttsStore.playbackState = {mode: 'idle'};
+    });
+    const onSendPress = jest.fn();
+    const {queryByTestId} = render(
+      <UserContext.Provider value={user}>
+        <ChatInput
+          {...{
+            onSendPress,
+            showThinkingToggle: true,
+            sendButtonVisibilityMode: 'editing',
+          }}
+        />
+      </UserContext.Provider>,
+    );
+
+    expect(queryByTestId('voicechip')).toBeNull();
+  });
+
+  it('keeps voice stop control visible in Agent mode while speech is active', () => {
+    runInAction(() => {
+      chatSessionStore.setChatMode('agent');
+      ttsStore.userTTSOverride = true;
+      ttsStore.currentVoice = {engine: 'kitten', id: 'voice-1', name: 'Voice'};
+      ttsStore.playbackState = {mode: 'playing', messageId: 'm1'};
+    });
+    const onSendPress = jest.fn();
+    const {getByTestId} = render(
+      <UserContext.Provider value={user}>
+        <ChatInput
+          {...{
+            onSendPress,
+            showThinkingToggle: true,
+            sendButtonVisibilityMode: 'editing',
+          }}
+        />
+      </UserContext.Provider>,
+    );
+
+    expect(getByTestId('voicechip')).toBeTruthy();
   });
 
   it('shows video button for video pal type', async () => {

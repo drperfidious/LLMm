@@ -88,6 +88,21 @@ export const AssistantTurnFooter: React.FC<AssistantTurnFooterProps> = observer(
         }),
       );
     }
+    if (
+      completionResult?.nCtx != null &&
+      completionResult.nCtx > 0 &&
+      completionResult.used > 0
+    ) {
+      timingParts.push(
+        t(l10n.components.bubble.contextUsed, {
+          used: Math.min(
+            completionResult.used,
+            completionResult.nCtx,
+          ).toLocaleString(),
+          total: completionResult.nCtx.toLocaleString(),
+        }),
+      );
+    }
     const fullTimingsString = timingParts.join(', ');
 
     const copyToClipboard = () => {

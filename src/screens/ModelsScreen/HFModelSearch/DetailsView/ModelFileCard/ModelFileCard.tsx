@@ -76,9 +76,10 @@ export const ModelFileCard: FC<ModelFileCardProps> = observer(
 
     const storeModel = modelStore.models.find(m => m.id === convertedModel.id);
 
-    const isDownloading = storeModel
-      ? modelStore.isDownloading(storeModel.id)
-      : false;
+    const isDownloading = Boolean(
+      storeModel?.isDownloading ||
+        (storeModel ? modelStore.isDownloading(storeModel.id) : false),
+    );
     const downloadProgress = storeModel?.progress || 0;
     const downloadSpeed = storeModel?.downloadSpeed;
 

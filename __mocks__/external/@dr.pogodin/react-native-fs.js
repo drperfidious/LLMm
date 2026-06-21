@@ -1,6 +1,7 @@
 // Track deleted files for stateful behavior in tests
 const deletedFiles = new Set();
 export const stat = jest.fn();
+export const readDir = jest.fn().mockResolvedValue([]);
 export const mkdir = jest.fn();
 export const unlink = jest.fn().mockImplementation(path => {
   deletedFiles.add(path);
@@ -67,6 +68,7 @@ export const __resetMockState = () => {
 const RNFS = {
   mkdir,
   stat,
+  readDir,
   unlink,
   exists,
   stopDownload,

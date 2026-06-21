@@ -19,16 +19,18 @@ interface FilterChipsProps {
   activeFilter: FilterType;
   onFilterChange: (filter: FilterType) => void;
   isAuthenticated: boolean;
+  remoteEnabled?: boolean;
 }
 
 interface FilterOption {
   key: FilterType;
   label: string;
   showWhenUnauthenticated?: boolean;
+  remoteOnly?: boolean;
 }
 
 export const FilterChips: React.FC<FilterChipsProps> = observer(
-  ({activeFilter, onFilterChange, isAuthenticated}) => {
+  ({activeFilter, onFilterChange, isAuthenticated, remoteEnabled = true}) => {
     const theme = useTheme();
     const styles = createStyles(theme);
 
@@ -57,16 +59,20 @@ export const FilterChips: React.FC<FilterChipsProps> = observer(
         key: 'free',
         label: PAL_FILTER_LABELS.free,
         showWhenUnauthenticated: true,
+        remoteOnly: true,
       },
       {
         key: 'premium',
         label: PAL_FILTER_LABELS.premium,
         showWhenUnauthenticated: true,
+        remoteOnly: true,
       },
     ];
 
     const visibleFilters = filterOptions.filter(
-      option => isAuthenticated || option.showWhenUnauthenticated,
+      option =>
+        (remoteEnabled || !option.remoteOnly) &&
+        (isAuthenticated || option.showWhenUnauthenticated),
     );
 
     return (

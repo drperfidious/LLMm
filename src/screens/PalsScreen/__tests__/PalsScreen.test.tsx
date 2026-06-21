@@ -5,7 +5,7 @@ import {render} from '../../../../jest/test-utils';
 
 import {PalsScreen} from '../PalsScreen';
 
-import {authService, syncService} from '../../../services';
+import {authService, palsHubService, syncService} from '../../../services';
 import {palStore} from '../../../store';
 import {createPal, createPalsHubPal} from '../../../../jest/fixtures/pals';
 
@@ -16,6 +16,7 @@ describe('PalsScreen', () => {
 
     // Reset the mock services to default state
     authService.isAuthenticated = false;
+    (palsHubService.isConfigured as jest.Mock).mockReturnValue(true);
     (syncService.needsSync as jest.Mock).mockResolvedValue(false);
     (syncService.syncAll as jest.Mock).mockResolvedValue(undefined);
 
@@ -263,6 +264,26 @@ describe('PalsScreen', () => {
   });
 
   describe('Authentication State', () => {
+    it('should hide PalsHub sign-in surfaces when PalsHub is not configured', () => {
+      authService.isAuthenticated = false;
+      (palsHubService.isConfigured as jest.Mock).mockReturnValue(false);
+      palStore.pals = [
+        createPal({id: 'local-1', name: 'Local Agent', source: 'local'}),
+      ];
+
+      const {getByText, queryByTestId} = render(<PalsScreen />, {
+        withNavigation: true,
+        withSafeArea: true,
+        withBottomSheetProvider: true,
+      });
+
+      expect(getByText('Local Agent')).toBeTruthy();
+      expect(queryByTestId('compact-auth-bar')).toBeNull();
+      expect(queryByTestId('filter-chip-premium')).toBeNull();
+      expect(queryByTestId('bottom-action-profile')).toBeNull();
+      expect(palStore.searchPalsHubPals).not.toHaveBeenCalled();
+    });
+
     it('should show auth bar when user is not authenticated', () => {
       authService.isAuthenticated = false;
 
@@ -372,7 +393,7 @@ describe('PalsScreen', () => {
       });
 
       await waitFor(() => {
-        expect(getByText(/No Pals found|Create your first Pal/i)).toBeTruthy();
+        expect(getByText(/No agents found|Create your first agent/i)).toBeTruthy();
       });
     });
 
@@ -393,7 +414,7 @@ describe('PalsScreen', () => {
       fireEvent.press(localFilter);
 
       await waitFor(() => {
-        expect(getByText(/Create your first Pal/i)).toBeTruthy();
+        expect(getByText(/Create your first agent/i)).toBeTruthy();
       });
     });
   });

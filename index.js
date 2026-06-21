@@ -14,7 +14,19 @@ if (__E2E__) {
   LogBox.ignoreAllLogs(true);
 }
 
+// The Supertonic ONNX path can emit a native console.error before its promise
+// rejects. TTSStore catches that rejection, disables Supertonic autospeak, and
+// releases the engine; keep the recoverable native line from taking over dev
+// builds with a redbox.
+LogBox.ignoreLogs(['[Supertonic][Inference] estimateVector']);
+
 import App from './App';
 import {name as appName} from './app.json';
 
 AppRegistry.registerComponent(appName, () => App);
+
+// Compatibility for dev installs built before the LLMm rebrand. Older native
+// shells still request "PocketPal" from Metro until the rebuilt app is installed.
+if (appName !== 'PocketPal') {
+  AppRegistry.registerComponent('PocketPal', () => App);
+}

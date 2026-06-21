@@ -3,7 +3,7 @@
     "screenTitle": "앱 정보",
     "description": "대규모 언어 모델(LLM)을 모바일 기기에서 직접 구동하는 앱입니다. llama.cpp 및 llama.rn 라이브러리를 기반으로 구축되었습니다.",
     "supportProject": "프로젝트 지원하기",
-    "supportProjectDescription": "PocketPal AI가 마음에 드신다면, 다음 방법으로 프로젝트를 지원해 주세요:",
+    "supportProjectDescription": "LLMm가 마음에 드신다면, 다음 방법으로 프로젝트를 지원해 주세요:",
     "githubButton": "GitHub Star 주기",
     "orText": "또는",
     "orBy": "또는",
@@ -720,10 +720,10 @@
   },
   "feedback": {
     "title": "피드백 보내기",
-    "description": "여러분의 소중한 의견을 들려주세요! PocketPal AI가 어떻게 도움이 되고 있는지, 그리고 더 유용한 앱이 되려면 무엇을 개선하면 좋을지 알려주세요.",
+    "description": "여러분의 소중한 의견을 들려주세요! LLMm가 어떻게 도움이 되고 있는지, 그리고 더 유용한 앱이 되려면 무엇을 개선하면 좋을지 알려주세요.",
     "shareThoughtsButton": "의견 공유하기",
     "useCase": {
-      "label": "PocketPal AI를 어떤 용도로 사용하시나요?",
+      "label": "LLMm를 어떤 용도로 사용하시나요?",
       "placeholder": "예: 요약, 역할극 등"
     },
     "featureRequests": {
@@ -735,7 +735,7 @@
       "label": "일반 피드백"
     },
     "usageFrequency": {
-      "label": "PocketPal AI를 얼마나 자주 사용하시나요? (선택 사항)",
+      "label": "LLMm를 얼마나 자주 사용하시나요? (선택 사항)",
       "options": {
         "daily": "매일",
         "weekly": "매주",

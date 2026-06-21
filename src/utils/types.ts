@@ -490,6 +490,7 @@ export interface Model {
   size: number; // Size in bytes
   params: number;
   isDownloaded: boolean;
+  isDownloading?: boolean;
   downloadUrl: string;
   hfUrl: string;
   progress: number; // Progress as a percentage
@@ -541,6 +542,8 @@ export interface Model {
 export type RootDrawerParamList = {
   Chat: undefined;
   Models: undefined;
+  Talents: undefined;
+  Documents: undefined;
   Settings: undefined;
 };
 
@@ -634,7 +637,7 @@ type RequiredContextFields =
   | 'use_mlock';
 
 /**
- * Context initialization parameters for PocketPal AI
+ * Context initialization parameters for LLMm
  * Extends llama.rn's ContextParams but excludes 'model' and makes core fields required
  * This ensures type safety and eliminates the need for fallback values in UI components
  */
@@ -688,7 +691,10 @@ export interface LegacyContextInitParams {
     | 'q4_1'
     | 'iq4_nl'
     | 'q5_0'
-    | 'q5_1';
+    | 'q5_1'
+    | 'turbo4'
+    | 'turbo3'
+    | 'turbo2';
   cache_type_v:
     | 'f16'
     | 'f32'
@@ -697,7 +703,10 @@ export interface LegacyContextInitParams {
     | 'q4_1'
     | 'iq4_nl'
     | 'q5_0'
-    | 'q5_1';
+    | 'q5_1'
+    | 'turbo4'
+    | 'turbo3'
+    | 'turbo2';
   n_gpu_layers: number;
   use_mlock?: boolean;
   use_mmap?: boolean;
@@ -782,4 +791,7 @@ export enum CacheType {
   IQ4_NL = 'iq4_nl',
   Q5_0 = 'q5_0',
   Q5_1 = 'q5_1',
+  TURBO4 = 'turbo4',
+  TURBO3 = 'turbo3',
+  TURBO2 = 'turbo2',
 }

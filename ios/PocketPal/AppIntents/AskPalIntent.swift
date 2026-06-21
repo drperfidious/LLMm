@@ -2,7 +2,7 @@
 //  AskPalIntent.swift
 //  PocketPal
 //
-//  App Intent for asking a Pal a question via Siri
+//  App Intent for asking an agent a question via Siri
 //
 
 import Foundation
@@ -10,12 +10,12 @@ import AppIntents
 
 @available(iOS 16.0, *)
 struct AskPalIntent: AppIntent {
-    static var title: LocalizedStringResource = "Ask Pal"
-    static var description = IntentDescription("Ask a question to a specific Pal and get an AI response")
+    static var title: LocalizedStringResource = "Ask Agent"
+    static var description = IntentDescription("Ask a question to a specific local AI agent and get a response")
     
     static var openAppWhenRun: Bool = false // Run in background
     
-    @Parameter(title: "Pal", description: "The Pal to ask")
+    @Parameter(title: "Agent", description: "The agent to ask")
     var pal: PalEntity
     
     @Parameter(title: "Message", description: "Your question or message")
@@ -35,7 +35,7 @@ struct AskPalIntent: AppIntent {
 
         // We MUST have a model path from the pal
         guard let palModelPath = pal.defaultModelPath else {
-            print("[AskPalIntent] Error: Pal has no default model")
+            print("[AskPalIntent] Error: Agent has no default model")
             throw AskPalError.noModelAvailable
         }
 
@@ -109,12 +109,11 @@ enum AskPalError: Error, LocalizedError {
     var errorDescription: String? {
         switch self {
         case .emptyMessage:
-            return "Please provide a message to send to the Pal"
+            return "Please provide a message to send to the agent"
         case .noModelAvailable:
-            return "No AI model is available. Please download a model in the PocketPal app first."
+            return "No AI model is available. Please download a model in LLMm first."
         case .inferenceFailed(let details):
             return "Failed to generate response: \(details)"
         }
     }
 }
-

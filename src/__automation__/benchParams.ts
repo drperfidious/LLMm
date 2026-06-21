@@ -149,14 +149,21 @@ export function composeCellParams(args: {
   filePath: string;
   base: BenchBaseParams;
   overrides: SettingsOverrides;
-  devices: string[];
+  devices?: string[];
   n_gpu_layers: number;
+  no_gpu_devices?: boolean;
 }): ContextParams {
-  return {
+  const params: ContextParams = {
     ...args.base,
     ...buildOverridesParams(args.overrides),
     model: args.filePath,
-    devices: args.devices,
     n_gpu_layers: args.n_gpu_layers,
   };
+  if (args.devices !== undefined) {
+    params.devices = args.devices;
+  }
+  if (args.no_gpu_devices !== undefined) {
+    params.no_gpu_devices = args.no_gpu_devices;
+  }
+  return params;
 }

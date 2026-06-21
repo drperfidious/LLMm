@@ -32,6 +32,7 @@ export type SupertonicProgressCallback = (progress: number) => void;
  * pre-v2 callers. Language-picker UX lands in follow-up `v1b-tts-language`.
  */
 const DEFAULT_SUPERTONIC_LANGUAGE: SupertonicLanguage = 'en';
+const SUPERTONIC_MAX_CHUNK_SIZE = 120;
 
 /**
  * Supertonic neural TTS engine.
@@ -250,7 +251,7 @@ export class SupertonicEngine implements Engine {
       voicesPath: `file://${modelDir}/${SUPERTONIC_VOICES_MANIFEST_FILENAME}`,
       silentMode: 'obey',
       ducking: true,
-      maxChunkSize: 200,
+      maxChunkSize: SUPERTONIC_MAX_CHUNK_SIZE,
       executionProviders: ['cpu'],
     });
   }

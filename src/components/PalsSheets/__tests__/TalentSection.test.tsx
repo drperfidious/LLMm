@@ -68,7 +68,7 @@ describe('TalentSection', () => {
       expect(getByTestId('talent-section')).toBeTruthy();
     });
 
-    it('renders all 3 talent switches (render_html, calculate, datetime)', () => {
+    it('renders all built-in talent switches', () => {
       const {getByTestId} = render(
         <FormWrapper>
           <TalentSection />
@@ -78,6 +78,9 @@ describe('TalentSection', () => {
       expect(getByTestId('talent-switch-render_html')).toBeTruthy();
       expect(getByTestId('talent-switch-calculate')).toBeTruthy();
       expect(getByTestId('talent-switch-datetime')).toBeTruthy();
+      expect(getByTestId('talent-switch-sms_draft')).toBeTruthy();
+      expect(getByTestId('talent-switch-mail_draft')).toBeTruthy();
+      expect(getByTestId('talent-switch-web_search')).toBeTruthy();
     });
 
     it('renders talent item containers for each talent', () => {
@@ -90,6 +93,9 @@ describe('TalentSection', () => {
       expect(getByTestId('talent-item-render_html')).toBeTruthy();
       expect(getByTestId('talent-item-calculate')).toBeTruthy();
       expect(getByTestId('talent-item-datetime')).toBeTruthy();
+      expect(getByTestId('talent-item-sms_draft')).toBeTruthy();
+      expect(getByTestId('talent-item-mail_draft')).toBeTruthy();
+      expect(getByTestId('talent-item-web_search')).toBeTruthy();
     });
 
     it('renders talent natural names from l10n', () => {
@@ -103,6 +109,9 @@ describe('TalentSection', () => {
       expect(getByText(names.render_html)).toBeTruthy();
       expect(getByText(names.calculate)).toBeTruthy();
       expect(getByText(names.datetime)).toBeTruthy();
+      expect(getByText(names.sms_draft)).toBeTruthy();
+      expect(getByText(names.mail_draft)).toBeTruthy();
+      expect(getByText(names.web_search)).toBeTruthy();
     });
 
     it('renders talent descriptions from l10n', () => {
@@ -116,6 +125,9 @@ describe('TalentSection', () => {
       expect(getByText(descriptions.render_html)).toBeTruthy();
       expect(getByText(descriptions.calculate)).toBeTruthy();
       expect(getByText(descriptions.datetime)).toBeTruthy();
+      expect(getByText(descriptions.sms_draft)).toBeTruthy();
+      expect(getByText(descriptions.mail_draft)).toBeTruthy();
+      expect(getByText(descriptions.web_search)).toBeTruthy();
     });
 
     it('renders the section divider with "Talents" label', () => {
@@ -220,15 +232,25 @@ describe('TalentSection', () => {
       expect(getByTestId('talent-switch-calculate').props.value).toBe(true);
       expect(getByTestId('talent-switch-datetime').props.value).toBe(true);
 
-      // render_html should be off
+      // Other talents should be off
       expect(getByTestId('talent-switch-render_html').props.value).toBe(false);
+      expect(getByTestId('talent-switch-sms_draft').props.value).toBe(false);
+      expect(getByTestId('talent-switch-mail_draft').props.value).toBe(false);
+      expect(getByTestId('talent-switch-web_search').props.value).toBe(false);
     });
 
     it('all talents pre-selected shows all switches as enabled', () => {
       const {getByTestId} = render(
         <FormWrapper
           defaultValues={{
-            talents: ['render_html', 'calculate', 'datetime'],
+            talents: [
+              'render_html',
+              'calculate',
+              'datetime',
+              'sms_draft',
+              'mail_draft',
+              'web_search',
+            ],
           }}>
           <TalentSection />
         </FormWrapper>,
@@ -237,6 +259,9 @@ describe('TalentSection', () => {
       expect(getByTestId('talent-switch-render_html').props.value).toBe(true);
       expect(getByTestId('talent-switch-calculate').props.value).toBe(true);
       expect(getByTestId('talent-switch-datetime').props.value).toBe(true);
+      expect(getByTestId('talent-switch-sms_draft').props.value).toBe(true);
+      expect(getByTestId('talent-switch-mail_draft').props.value).toBe(true);
+      expect(getByTestId('talent-switch-web_search').props.value).toBe(true);
     });
 
     it('no pre-selected talents shows all switches as disabled', () => {
@@ -249,6 +274,9 @@ describe('TalentSection', () => {
       expect(getByTestId('talent-switch-render_html').props.value).toBe(false);
       expect(getByTestId('talent-switch-calculate').props.value).toBe(false);
       expect(getByTestId('talent-switch-datetime').props.value).toBe(false);
+      expect(getByTestId('talent-switch-sms_draft').props.value).toBe(false);
+      expect(getByTestId('talent-switch-mail_draft').props.value).toBe(false);
+      expect(getByTestId('talent-switch-web_search').props.value).toBe(false);
     });
   });
 });

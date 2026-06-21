@@ -93,6 +93,26 @@ describe('ModelSettingsSheet', () => {
 
   beforeEach(() => {
     jest.clearAllMocks();
+    modelStore.contextInitParams = {
+      ...modelStore.contextInitParams,
+      n_ctx: 2048,
+      n_batch: 512,
+      n_ubatch: 512,
+      n_threads: 4,
+      n_gpu_layers: 99,
+      image_max_tokens: 512,
+      flash_attn_type: 'auto',
+      cache_type_k: 'f16',
+      cache_type_v: 'f16',
+      use_mmap: 'true',
+      use_mlock: false,
+      kv_unified: true,
+    };
+    modelStore.allowUnsafeContextLimits = false;
+    modelStore.requestedContextSize = undefined;
+    modelStore.modelInitProfiles = {};
+    modelStore.models = [mockModel];
+    modelStore.activeModelId = undefined;
   });
 
   it('renders correctly when visible', () => {
@@ -158,6 +178,7 @@ describe('ModelSettingsSheet', () => {
       mockModel.id,
     );
     expect(modelStore.resetModelStopWords).toHaveBeenCalledWith(mockModel.id);
+    expect(modelStore.clearModelInitProfile).toHaveBeenCalledWith(mockModel.id);
   });
 
   it('handles reset model name correctly', async () => {
@@ -214,5 +235,97 @@ describe('ModelSettingsSheet', () => {
 
     // The state updates are handled by useEffect, which is tested implicitly
     // through the save/cancel/reset tests
+  });
+
+  it('saves per-model load profile settings without loading the model', async () => {
+    const {getByTestId, getByText} = render(
+      <ModelSettingsSheet {...defaultProps} />,
+    );
+
+    fireEvent.changeText(getByTestId('profile-n-ctx'), '8192');
+    fireEvent.changeText(getByTestId('profile-n-batch'), '128');
+    fireEvent(getByTestId('profile-use-mmap'), 'valueChange', false);
+
+    await act(async () => {
+      fireEvent.press(getByText('Save Changes'));
+    });
+
+    expect(modelStore.selectModel).not.toHaveBeenCalled();
+    expect(modelStore.saveModelInitProfileSettings).toHaveBeenCalledWith(
+      mockModel.id,
+      expect.objectContaining({
+        n_ctx: 8192,
+        n_batch: 128,
+        use_mmap: 'false',
+      }),
+      true,
+      'manual',
+      8192,
+    );
+  });
+
+  it('allows profile number inputs to be cleared while editing', async () => {
+    const {getByTestId, getByText} = render(
+      <ModelSettingsSheet {...defaultProps} />,
+    );
+
+    const contextInput = getByTestId('profile-n-ctx');
+    fireEvent.changeText(contextInput, '');
+
+    expect(getByTestId('profile-n-ctx').props.value).toBe('');
+
+    fireEvent.changeText(getByTestId('profile-n-ctx'), '50000');
+
+    await act(async () => {
+      fireEvent.press(getByText('Save Changes'));
+    });
+
+    expect(modelStore.saveModelInitProfileSettings).toHaveBeenCalledWith(
+      mockModel.id,
+      expect.objectContaining({
+        n_ctx: 50000,
+      }),
+      true,
+      'manual',
+      50000,
+    );
+  });
+
+  it('saves high profile context values directly', async () => {
+    const boundaryModel: Model = {
+      ...mockModel,
+      id: 'bonsai',
+      name: 'Ternary Bonsai 8B',
+      params: 8_188_548_096,
+      size: 2_182_184_672,
+      ggufMetadata: {context_length: 65536} as any,
+    };
+    modelStore.models = [boundaryModel];
+
+    const {getByTestId, getByText} = render(
+      <ModelSettingsSheet {...defaultProps} model={boundaryModel} />,
+    );
+
+    fireEvent.changeText(getByTestId('profile-n-ctx'), '50000');
+
+    await act(async () => {
+      fireEvent.press(getByText('Save Changes'));
+    });
+
+    expect(modelStore.saveModelInitProfileSettings).toHaveBeenCalledWith(
+      boundaryModel.id,
+      expect.objectContaining({
+        n_ctx: 50000,
+      }),
+      true,
+      'manual',
+      50000,
+    );
+    expect(modelStore.modelInitProfiles[boundaryModel.id].settings.n_ctx).toBe(
+      50000,
+    );
+    expect(
+      modelStore.modelInitProfiles[boundaryModel.id].requestedContextSize,
+    ).toBe(50000);
   });
 });

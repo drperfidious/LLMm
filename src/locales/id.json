@@ -451,7 +451,7 @@
     "screenTitle": "Info Aplikasi",
     "description": "Aplikasi yang membawa model bahasa langsung ke ponsel Anda. Dibangun di atas llama.cpp dan llama.rn.",
     "supportProject": "Dukung Proyek Ini",
-    "supportProjectDescription": "Jika Anda menikmati menggunakan PocketPal AI, pertimbangkan untuk mendukung proyek ini dengan:",
+    "supportProjectDescription": "Jika Anda menikmati menggunakan LLMm, pertimbangkan untuk mendukung proyek ini dengan:",
     "githubButton": "Beri Bintang di GitHub",
     "orText": "atau",
     "orBy": "atau dengan",
@@ -463,10 +463,10 @@
   },
   "feedback": {
     "title": "Kirim Masukan",
-    "description": "Suara Anda penting! Ceritakan bagaimana PocketPal AI membantu Anda dan apa yang bisa kami lakukan agar lebih bermanfaat.",
+    "description": "Suara Anda penting! Ceritakan bagaimana LLMm membantu Anda dan apa yang bisa kami lakukan agar lebih bermanfaat.",
     "shareThoughtsButton": "Bagikan pikiran Anda",
     "useCase": {
-      "label": "Untuk apa Anda menggunakan PocketPal AI?",
+      "label": "Untuk apa Anda menggunakan LLMm?",
       "placeholder": "misalnya, merangkum, bermain peran, dll."
     },
     "featureRequests": {
@@ -478,7 +478,7 @@
       "placeholder": "Bagikan pikiran lain yang Anda miliki."
     },
     "usageFrequency": {
-      "label": "Seberapa sering Anda menggunakan PocketPal AI? (Opsional)",
+      "label": "Seberapa sering Anda menggunakan LLMm? (Opsional)",
       "options": {
         "daily": "Setiap hari",
         "weekly": "Mingguan",

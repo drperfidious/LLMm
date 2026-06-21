@@ -15,6 +15,25 @@ import {
   RenderHtmlEngine,
   CalculateEngine,
   DatetimeEngine,
+  SmsDraftEngine,
+  MailDraftEngine,
+  MailReadEngine,
+  MailSearchEngine,
+  MailSendEngine,
+  DeepResearchEngine,
+  WebSearchEngine,
+  TalentDesignerEngine,
+  WorkspaceDeleteEngine,
+  WorkspaceListEngine,
+  WorkspaceReadEngine,
+  WorkspaceSearchEngine,
+  WorkspaceShellEngine,
+  WorkspaceWriteEngine,
+  CalendarCreateEventEngine,
+  CalendarFindEventsEngine,
+  ReminderCompleteEngine,
+  ReminderCreateEngine,
+  ReminderFindEngine,
   deriveToolSchemas,
   resetRegisteredFlag,
   talentRegistry,
@@ -97,6 +116,25 @@ describe('PACT cleanup: toToolDefinition() contract', () => {
     new RenderHtmlEngine(),
     new CalculateEngine(),
     new DatetimeEngine(),
+    new SmsDraftEngine(),
+    new MailDraftEngine(),
+    new MailSearchEngine(async () => 'test-token'),
+    new MailReadEngine(async () => 'test-token'),
+    new MailSendEngine(async () => 'test-token'),
+    new DeepResearchEngine(),
+    new WebSearchEngine(async () => 'test-key'),
+    new TalentDesignerEngine(),
+    new WorkspaceListEngine(),
+    new WorkspaceReadEngine(),
+    new WorkspaceWriteEngine(),
+    new WorkspaceDeleteEngine(),
+    new WorkspaceSearchEngine(),
+    new WorkspaceShellEngine(),
+    new CalendarFindEventsEngine(),
+    new CalendarCreateEventEngine(),
+    new ReminderFindEngine(),
+    new ReminderCreateEngine(),
+    new ReminderCompleteEngine(),
   ];
 
   it.each(engines.map(e => [e.name, e]))(
@@ -137,15 +175,38 @@ describe('PACT cleanup: deriveToolSchemas()', () => {
     resetRegisteredFlag();
   });
 
-  it('returns all 3 schemas without prior registration', () => {
+  it('returns all built-in schemas without prior registration', () => {
     // Registry is completely empty
     expect(talentRegistry.getAll()).toHaveLength(0);
 
     const schemas = deriveToolSchemas();
-    expect(schemas).toHaveLength(3);
+    expect(schemas).toHaveLength(22);
 
     const names = schemas.map(s => s.function.name).sort();
-    expect(names).toEqual(['calculate', 'datetime', 'render_html']);
+    expect(names).toEqual([
+      'calculate',
+      'calendar_create_event',
+      'calendar_find_events',
+      'create_talent',
+      'datetime',
+      'deep_research',
+      'mail_draft',
+      'mail_read',
+      'mail_search',
+      'mail_send',
+      'reminder_complete',
+      'reminder_create',
+      'reminder_find',
+      'render_html',
+      'sms_draft',
+      'web_search',
+      'workspace_delete',
+      'workspace_list',
+      'workspace_read',
+      'workspace_search',
+      'workspace_shell',
+      'workspace_write',
+    ]);
   });
 
   it('each schema has the OpenAI function-calling shape', () => {
@@ -169,7 +230,7 @@ describe('PACT cleanup: deriveToolSchemas()', () => {
       tool_choice: 'auto' as const,
       jinja: true,
     };
-    expect(completionSettings.tools).toHaveLength(3);
+    expect(completionSettings.tools).toHaveLength(22);
     expect(completionSettings.tools[0].type).toBe('function');
   });
 });

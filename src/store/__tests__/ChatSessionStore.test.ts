@@ -1133,6 +1133,7 @@ describe('chatSessionStore', () => {
 
       // Reset store's internal streaming state
       (chatSessionStore as any).lastStreamingUpdateTime = 0;
+      (chatSessionStore as any).lastStreamingPersistTime = 0;
       (chatSessionStore as any).pendingStreamingUpdate = null;
       if ((chatSessionStore as any).streamingThrottleTimer) {
         clearTimeout((chatSessionStore as any).streamingThrottleTimer);
@@ -1235,6 +1236,37 @@ describe('chatSessionStore', () => {
       expect(chatSessionRepository.updateMessage).toHaveBeenCalledWith(
         testMessage.id,
         update,
+      );
+    });
+
+    it('should checkpoint streaming text instead of persisting every UI update', () => {
+      jest.setSystemTime(mockTime);
+      chatSessionStore.updateMessageStreaming(testMessage.id, 'session1', {
+        text: 'first',
+      });
+      expect(chatSessionRepository.updateMessage).toHaveBeenCalledTimes(1);
+
+      mockTime += 500;
+      jest.setSystemTime(mockTime);
+      chatSessionStore.updateMessageStreaming(testMessage.id, 'session1', {
+        text: 'second',
+      });
+      jest.advanceTimersByTime(80);
+      expect(
+        (chatSessionStore.sessions[0].messages[0] as MessageType.Text).text,
+      ).toBe('second');
+      expect(chatSessionRepository.updateMessage).toHaveBeenCalledTimes(1);
+
+      mockTime += 2000;
+      jest.setSystemTime(mockTime);
+      chatSessionStore.updateMessageStreaming(testMessage.id, 'session1', {
+        text: 'third',
+      });
+      jest.advanceTimersByTime(80);
+      expect(chatSessionRepository.updateMessage).toHaveBeenCalledTimes(2);
+      expect(chatSessionRepository.updateMessage).toHaveBeenLastCalledWith(
+        testMessage.id,
+        {text: 'third'},
       );
     });
 

@@ -119,6 +119,46 @@ Suggested branch split:
 - `private/ios-signing`: bundle id, development team, provisioning, first simulator/device build.
 - `private/ios-bench-harness`: iOS benchmark config push/pull, benchmark report capture, model/task matrix expansion.
 - `private/model-quality-suite`: pass/fail tasks for tool calling, formatting, reasoning, and context-load behavior.
+- `private/agentic-backend-loop`: harden the backend agent loop, tool-call parsing, dynamic tool execution dispatch, and prompt/init injection before treating a model as generally useful.
 - `private/turboquant-metal-research`: prototype CUDA-style turboquant ideas through the iOS/Metal-compatible layer after the baseline model is established.
 
 For later Odysseus integration, keep it as a bridge/research path rather than a baseline dependency: local endpoint calls can target the existing OpenAI-style `/v1/chat/completions` shape when comparing on-device behavior against the local stack.
+
+## Agentic Backend Loop
+
+Do not let the TurboQuant/Metal path crowd out the agent layer. A faster model
+is only valuable if the runtime can reliably identify intended actions, execute
+tools, and feed results back into follow-up reasoning without fragile prompt
+coupling.
+
+Existing surface:
+
+- `src/services/agent/AgentRunner.ts`: multi-turn loop, streaming token bridge,
+  normalized tool-call ids, injected talent lookup, tool response replay.
+- `src/services/agent/triggerMarkers.ts`: grammar-trigger marker cache from
+  llama.rn formatted chat output.
+- `src/services/talents/*`: registered executable tools/Talents and schemas.
+- `src/__automation__/qualityTasks.ts`: benchmark tasks for formatting,
+  tool-call emission, reasoning, and context recall.
+
+Required next work:
+
+1. Add a resilient tool-call parser layer that can recover calls from structured
+   `tool_calls`, streamed partial tool-call chunks, common JSON-in-text forms,
+   and model-family sentinels without executing ambiguous text accidentally.
+2. Add a dynamic dispatch policy that validates tool name, schema, argument
+   shape, user/Pal allow-list, and execution result before adding tool output
+   to the next turn.
+3. Add keyword/intent based init injection so prompts that imply calculator,
+   date/time, render/html, code/data, or benchmark-analysis work can receive
+   the right tool schemas and system hints without globally bloating every
+   context.
+4. Add loop guards: max turns, repeated-call detection, same-tool retry caps,
+   malformed-argument repair attempts, and clear terminal errors.
+5. Feed these checks into the benchmark matrix: tool execution should be scored
+   on parsed call validity, argument correctness, execution success, follow-up
+   answer quality, latency, and failure mode.
+
+This work should run after the first clean iOS model baseline and before using
+TurboQuant gains as a product-quality claim. TurboQuant can make weak agent
+behavior faster, but it will not make weak parsing or dispatch correct.

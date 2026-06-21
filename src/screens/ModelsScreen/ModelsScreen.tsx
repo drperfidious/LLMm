@@ -268,6 +268,7 @@ export const ModelsScreen: React.FC = observer(() => {
 
   const activeModelId = modelStore.activeModel?.id;
   const models = modelStore.displayModels;
+  const downloadRevision = modelStore.downloadRevision;
 
   // useMemo uses shallow comaprison for dependencies,
   // so we use computed instead for deep comparison
@@ -361,6 +362,7 @@ export const ModelsScreen: React.FC = observer(() => {
         onPress={() => toggleGroup(group.type)}>
         <FlatList
           data={group.items}
+          extraData={downloadRevision}
           keyExtractor={subItem => subItem.id}
           renderItem={({item: subItem}) => (
             <ModelCard
@@ -401,7 +403,7 @@ export const ModelsScreen: React.FC = observer(() => {
         contentContainerStyle={styles.listContainer}
         data={flatListModels}
         keyExtractor={item => item.type}
-        extraData={activeModelId}
+        extraData={`${activeModelId ?? ''}:${downloadRevision}`}
         renderItem={renderGroupHeader}
         refreshControl={
           <RefreshControl

@@ -5,7 +5,7 @@
  * captures them in-process via `addNativeLogListener` so it doesn't need a
  * spec wrapper or root access. `deriveLogSignals()` parses the buffer into
  * a structured payload; `deriveEffectiveBackend()` maps the payload to a
- * 4-state enum.
+ * closed backend enum.
  *
  * Pure functions only — no Node, no React Native imports — so this module
  * is safe to import from both the screen (Hermes) and unit tests (Jest).
@@ -13,14 +13,15 @@
 
 /**
  * Broad filter applied to every native log line. Matches anything from
- * llama.rn's ggml-opencl backend, the ggml-hexagon backend, the generic
- * ggml_backend_ log tags, and the load-tensor / model-load statements that
- * tell us how many layers ended up on GPU. Patterns calibrated against
- * llama.rn 0.12.x native-log output (verified live on POCO Adreno 840;
- * Hexagon literals verified at HEAD per WHAT D2).
+ * llama.rn's ggml-opencl backend, ggml-metal backend, the ggml-hexagon
+ * backend, the generic ggml_backend_ log tags, and the load-tensor /
+ * model-load statements that tell us how many layers ended up on GPU.
+ * Patterns calibrated against llama.rn 0.12.x native-log output (verified
+ * live on POCO Adreno 840; Hexagon/Metal literals verified at HEAD per
+ * WHAT D2 and llama.cpp Metal log call sites).
  */
 export const BENCH_LOG_RE =
-  /(ggml_opencl|using device GPUOpenCL|ggml_backend_|Adreno large buffer|offloaded \d+\/\d+ layers|load_tensors:|llama_model_load|ggml_cl|adreno_gen|ggml-hex|ggml_hexagon|Hexagon backend|new session: HTP|Hexagon Arch version|KV buffer size|compute buffer size)/;
+  /(ggml_opencl|using device GPUOpenCL|using device Metal|ggml_backend_|ggml[_-]metal|lm_ggml_backend_metal|Adreno large buffer|offloaded \d+\/\d+ layers|load_tensors:|llm_load_tensors:|llama_model_load|ggml_cl|adreno_gen|ggml-hex|ggml_hexagon|Hexagon backend|new session: HTP|Hexagon Arch version|KV buffer size|compute buffer size)/i;
 
 export interface LogSignals {
   opencl_init: boolean;
@@ -28,6 +29,13 @@ export interface LogSignals {
   adreno_gen: string | null;
   large_buffer_enabled: boolean;
   large_buffer_unsupported: boolean;
+  /** True when llama.cpp reports a Metal device or Metal backend allocation.
+   * Metal is the iOS/macOS GPU route behind `requested_backend='gpu'`. */
+  metal_init: boolean;
+  /** First Metal device name observed, e.g. "Apple A16 GPU". */
+  metal_device_name: string | null;
+  /** Metal backend allocation line, when logged by ggml-metal. */
+  metal_allocated_mib: number | null;
   /** True when the Hexagon registry-allocation line was observed. Mirrors
    * `opencl_init` (WHAT 1d, 8 D2 — verified literal:
    * `ggml-hex: Hexagon backend (experimental) : allocating new registry`). */
@@ -75,6 +83,8 @@ export type EffectiveBackend =
   | 'cpu'
   | 'opencl'
   | 'cpu+opencl-partial'
+  | 'metal'
+  | 'cpu+metal-partial'
   | 'hexagon'
   | 'cpu+hexagon-partial'
   | 'unknown';
@@ -91,6 +101,9 @@ export function emptyLogSignals(): LogSignals {
     adreno_gen: null,
     large_buffer_enabled: false,
     large_buffer_unsupported: false,
+    metal_init: false,
+    metal_device_name: null,
+    metal_allocated_mib: null,
     hexagon_init: false,
     hexagon_device_name: null,
     offloaded_layers: null,
@@ -110,7 +123,8 @@ export function emptyLogSignals(): LogSignals {
 
 /**
  * Parse captured native-log lines into a structured payload.
- * All regex anchors derive from llama.rn's ggml-opencl.cpp.
+ * All regex anchors derive from llama.rn's ggml-opencl / ggml-metal /
+ * ggml-hexagon logs plus llama.cpp's backend-agnostic tensor-load logs.
  */
 export function deriveLogSignals(lines: string[]): LogSignals {
   const signals = emptyLogSignals();
@@ -123,7 +137,9 @@ export function deriveLogSignals(lines: string[]): LogSignals {
   // The device-name segment can itself contain parentheses (e.g.
   // "QUALCOMM Adreno(TM) 840"), so we anchor on the trailing ") (" separator
   // before the "(unknown id)" suffix instead of `[^)]+`.
-  const usingDeviceRe = /using device GPUOpenCL\s*\((.+?)\)\s+\(/;
+  const usingDeviceRe = /using device GPUOpenCL\s*\((.+?)\)(?:\s+\(|\s+-|\s*$)/;
+  const usingMetalDeviceRe =
+    /using device Metal\s*\((.+?)\)(?:\s+\(|\s+-|\s*$)/;
   // Legacy pattern (`lm_ggml_opencl: device <name>`) kept as a fallback in
   // case llama.rn rolls back the log format.
   const legacyDeviceRe = /lm_ggml_opencl: device\s+(.+?)(?:,|\s*$)/;
@@ -132,6 +148,14 @@ export function deriveLogSignals(lines: string[]): LogSignals {
   const offloadedRe = /offloaded (\d+)\/(\d+) layers to GPU/;
   const lbUnsupportedRe =
     /Adreno large buffer.*(requested but not supported|unsupported)/i;
+  // Metal anchors. Current llama.cpp emits:
+  //   "llama_model_load_from_file_impl: using device Metal (Apple A16 GPU) (...)"
+  //   "lm_ggml_backend_metal_log_allocated_size: allocated buffer, size = X MiB"
+  // and then the usual backend-agnostic `load_tensors` / offload lines.
+  const metalInitRe =
+    /(using device Metal|(?:lm_)?ggml_backend_metal|ggml[_-]metal)/i;
+  const metalAllocatedRe =
+    /(?:lm_)?ggml_backend_metal_log_allocated_size:\s+allocated buffer,\s+size\s*=\s*([\d.]+)\s*MiB/i;
   // Hexagon (Qualcomm NPU) anchors. Strings are stable across llama.rn rc
   // bumps even when line numbers drift (WHAT D2):
   //   "ggml-hex: Hexagon backend (experimental) : allocating new registry : ndev N"
@@ -150,7 +174,7 @@ export function deriveLogSignals(lines: string[]): LogSignals {
   //   "llama_kv_cache:        CPU KV buffer size =    8.50 MiB"
   //   "llama_context:        CPU compute buffer size =  296.05 MiB"
   const weightBufferRe =
-    /load_tensors:\s+(\S+)\s+model buffer size\s*=\s*([\d.]+)\s*MiB/;
+    /(?:load_tensors|llm_load_tensors):\s+(\S+)\s+model buffer size\s*=\s*([\d.]+)\s*MiB/;
   const kvBufferRe = /:\s+(\S+)\s+KV buffer size\s*=\s*([\d.]+)\s*MiB/;
   const computeBufferRe =
     /:\s+(\S+)\s+compute buffer size\s*=\s*([\d.]+)\s*MiB/;
@@ -199,6 +223,22 @@ export function deriveLogSignals(lines: string[]): LogSignals {
     }
     if (lbUnsupportedRe.test(line)) {
       signals.large_buffer_unsupported = true;
+    }
+
+    if (metalInitRe.test(line)) {
+      signals.metal_init = true;
+    }
+
+    if (!signals.metal_device_name) {
+      const m = usingMetalDeviceRe.exec(line);
+      if (m) {
+        signals.metal_device_name = m[1].trim();
+      }
+    }
+
+    const metalAlloc = metalAllocatedRe.exec(line);
+    if (metalAlloc) {
+      signals.metal_allocated_mib = Number(metalAlloc[1]);
     }
 
     if (signals.offloaded_layers === null) {
@@ -280,10 +320,12 @@ export function deriveLogSignals(lines: string[]): LogSignals {
  *
  * Decision order:
  *   - HTP* keys present -> hexagon (full, or cpu+hexagon-partial via offloaded counts)
+ *   - Metal key present -> metal (full, or cpu+metal-partial via offloaded counts)
  *   - OpenCL key present -> opencl (full, or cpu+opencl-partial via large_buffer_unsupported / offloaded counts)
  *   - only CPU/CPU_REPACK keys -> cpu
  *   - empty weight set: fall back to log-init heuristics:
  *       * hexagon_init -> unknown (Hexagon registry-allocation fires even when the model never runs there)
+ *       * metal_init + partial/full counts -> cpu+metal-partial / metal
  *       * !opencl_init -> cpu
  *       * large_buffer_unsupported -> cpu+opencl-partial
  *       * partial offload counts -> cpu+opencl-partial
@@ -293,6 +335,7 @@ export function deriveLogSignals(lines: string[]): LogSignals {
 export function deriveEffectiveBackend(signals: LogSignals): EffectiveBackend {
   const wKeys = Object.keys(signals.memory_buffers.weights_mib);
   const hasHTP = wKeys.some(k => k.startsWith('HTP'));
+  const hasMetal = wKeys.some(k => k.startsWith('Metal'));
   const hasOpenCL = wKeys.some(k => k === 'OpenCL');
   const hasOnlyCPU =
     wKeys.length > 0 && wKeys.every(k => k === 'CPU' || k === 'CPU_REPACK');
@@ -306,6 +349,17 @@ export function deriveEffectiveBackend(signals: LogSignals): EffectiveBackend {
       return 'cpu+hexagon-partial';
     }
     return 'hexagon';
+  }
+
+  if (hasMetal) {
+    if (
+      signals.offloaded_layers !== null &&
+      signals.total_layers !== null &&
+      signals.offloaded_layers < signals.total_layers
+    ) {
+      return 'cpu+metal-partial';
+    }
+    return 'metal';
   }
 
   if (hasOpenCL) {
@@ -329,6 +383,23 @@ export function deriveEffectiveBackend(signals: LogSignals): EffectiveBackend {
   // Fallback to log-init heuristics for cells that failed before
   // `load_tensors:` lines fired (cells where weights_mib stays empty).
   if (signals.hexagon_init) {
+    return 'unknown';
+  }
+  if (signals.metal_init) {
+    if (
+      signals.offloaded_layers !== null &&
+      signals.total_layers !== null &&
+      signals.offloaded_layers < signals.total_layers
+    ) {
+      return 'cpu+metal-partial';
+    }
+    if (
+      signals.offloaded_layers !== null &&
+      signals.total_layers !== null &&
+      signals.offloaded_layers === signals.total_layers
+    ) {
+      return 'metal';
+    }
     return 'unknown';
   }
   if (!signals.opencl_init) {
@@ -365,12 +436,12 @@ export type RequestedBackend = 'cpu' | 'gpu' | 'hexagon';
 /**
  * Returns true when the actual backend the cell landed on satisfies the
  * cell's `requested_backend`. Partial offload (cpu+opencl-partial,
- * cpu+hexagon-partial) IS considered a satisfied request — the runner
- * landed on the requested backend, just incompletely; the report's
- * `effective_backend` field carries the partial signal so operators can
- * still spot it. Mismatch happens when the cell asked for one backend
- * and the model loaded on a fundamentally different one (e.g. requested
- * gpu, weights landed entirely on CPU).
+ * cpu+metal-partial, cpu+hexagon-partial) IS considered a satisfied request
+ * — the runner landed on the requested backend, just incompletely; the
+ * report's `effective_backend` field carries the partial signal so operators
+ * can still spot it. Mismatch happens when the cell asked for one backend and
+ * the model loaded on a fundamentally different one (e.g. requested gpu,
+ * weights landed entirely on CPU).
  *
  * Pure: no closure capture, no side effects. Exported for unit tests.
  */
@@ -382,7 +453,12 @@ export function requestSatisfiedBy(
     case 'cpu':
       return actual === 'cpu';
     case 'gpu':
-      return actual === 'opencl' || actual === 'cpu+opencl-partial';
+      return (
+        actual === 'opencl' ||
+        actual === 'cpu+opencl-partial' ||
+        actual === 'metal' ||
+        actual === 'cpu+metal-partial'
+      );
     case 'hexagon':
       return actual === 'hexagon' || actual === 'cpu+hexagon-partial';
   }

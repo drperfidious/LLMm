@@ -13,6 +13,7 @@ import {SettingsScreen} from '../SettingsScreen';
 
 import {modelStore, uiStore, ttsStore} from '../../../store';
 import {l10n} from '../../../locales';
+import {modelsList} from '../../../../jest/fixtures/models';
 
 jest.useFakeTimers();
 
@@ -21,8 +22,18 @@ const render = (ui: React.ReactElement, options: any = {}) =>
 
 describe('SettingsScreen', () => {
   beforeEach(() => {
+    jest.useFakeTimers();
     jest.clearAllMocks();
     jest.spyOn(Keyboard, 'dismiss');
+    modelStore.contextInitParams = {
+      ...modelStore.contextInitParams,
+      n_ctx: 2048,
+    };
+    modelStore.models = modelsList;
+    modelStore.activeModelId = undefined;
+    modelStore.lastUsedModelId = undefined;
+    modelStore.allowUnsafeContextLimits = false;
+    modelStore.requestedContextSize = undefined;
     // Ensure clean timer state for each test
     jest.clearAllTimers();
   });
@@ -84,7 +95,7 @@ describe('SettingsScreen', () => {
     expect(getByText('Please enter a valid number (minimum 200)')).toBeTruthy();
   });
 
-  it('handles outside press correctly and resets input', async () => {
+  it('handles outside press correctly and commits valid input', async () => {
     const {getByDisplayValue, getByText} = render(<SettingsScreen />, {
       withSafeArea: true,
       withNavigation: true,
@@ -96,8 +107,53 @@ describe('SettingsScreen', () => {
 
     await waitFor(() => {
       expect(Keyboard.dismiss).toHaveBeenCalled();
-      expect(getByDisplayValue('2048')).toBeTruthy(); // Reset back to original size
+      expect(getByDisplayValue('512')).toBeTruthy();
     });
+  });
+
+  it('commits high context values directly for boundary iOS models', async () => {
+    runInAction(() => {
+      modelStore.models = [
+        {
+          id: 'bonsai',
+          name: 'Ternary Bonsai 8B',
+          params: 8_188_548_096,
+          size: 2_182_184_672,
+          ggufMetadata: {context_length: 65536},
+        } as any,
+      ];
+      modelStore.activeModelId = 'bonsai';
+    });
+
+    const {getByTestId, getByText, getByDisplayValue, queryByTestId} = render(
+      <SettingsScreen />,
+      {
+        withSafeArea: true,
+        withNavigation: true,
+      },
+    );
+
+    const contextSizeInput = getByTestId('context-size-input');
+
+    act(() => {
+      fireEvent.changeText(contextSizeInput, '50000');
+    });
+
+    expect(
+      getByText(
+        'Requested context: 50000. Model reload needed for changes to take effect.',
+      ),
+    ).toBeTruthy();
+    expect(queryByTestId('unsafe-context-limits-switch')).toBeNull();
+
+    act(() => {
+      fireEvent(contextSizeInput, 'blur');
+    });
+
+    expect(modelStore.setNContext).toHaveBeenLastCalledWith(50000);
+    expect(modelStore.contextInitParams.n_ctx).toBe(50000);
+    expect(modelStore.requestedContextSize).toBe(50000);
+    expect(getByDisplayValue('50000')).toBeTruthy();
   });
 
   it('re-syncs the displayed context size when n_ctx changes externally', async () => {
@@ -182,7 +238,7 @@ describe('SettingsScreen', () => {
       fireEvent(gpuBtn, 'press');
     });
 
-    expect(modelStore.setDevices).toHaveBeenCalledWith(['Metal']);
+    expect(modelStore.setDevices).toHaveBeenCalledWith(['Apple A16 GPU']);
 
     const gpuSlider = getByTestId('gpu-layers-slider');
 

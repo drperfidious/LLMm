@@ -46,6 +46,12 @@ export async function getDeviceOptions(): Promise<DeviceOption[]> {
   const options: DeviceOption[] = [];
 
   if (Platform.OS === 'ios') {
+    const devices = await getAvailableDevices();
+    const metalDev =
+      devices.find(d => d.backend?.toLowerCase() === 'metal') ??
+      devices.find(d => d.backend?.toLowerCase().includes('metal')) ??
+      devices.find(d => d.type === 'gpu');
+
     // iOS: Three clear options
 
     // Option 1: Auto (devices: undefined, lets llama.cpp choose)
@@ -53,7 +59,7 @@ export async function getDeviceOptions(): Promise<DeviceOption[]> {
     options.push({
       id: 'auto',
       label: 'Auto',
-      description: 'Automatically selects Metal GPU (Recommended)',
+      description: 'Safely selects Metal or CPU based on device budget',
       devices: undefined,
       n_gpu_layers: 99,
       default_flash_attn_type: 'auto',
@@ -62,18 +68,22 @@ export async function getDeviceOptions(): Promise<DeviceOption[]> {
       platform: 'ios',
     });
 
-    // Option 2: Metal GPU (explicit devices: ['Metal'])
-    // Metal supports all flash attention types
-    options.push({
-      id: 'gpu',
-      label: 'Metal',
-      description: 'Explicitly use Metal GPU acceleration',
-      devices: ['Metal'],
-      n_gpu_layers: 99,
-      default_flash_attn_type: 'auto',
-      valid_flash_attn_types: ['auto', 'on', 'off'],
-      platform: 'ios',
-    });
+    // Option 2: Metal GPU. llama.rn resolves explicit devices by exact
+    // `lm_ggml_backend_dev_name()` match, and on iOS that name comes from
+    // `[MTLDevice name]` rather than the literal "Metal" alias.
+    if (metalDev?.deviceName) {
+      options.push({
+        id: 'gpu',
+        label: 'Metal',
+        description: 'Use Metal acceleration with device-safe layer caps',
+        devices: [metalDev.deviceName],
+        n_gpu_layers: 99,
+        default_flash_attn_type: 'auto',
+        valid_flash_attn_types: ['auto', 'on', 'off'],
+        platform: 'ios',
+        deviceInfo: metalDev,
+      });
+    }
 
     // Option 3: CPU only (n_gpu_layers: 0)
     // CPU supports all flash attention types

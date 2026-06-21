@@ -7,6 +7,7 @@ import {
 } from '../../../../jest/test-utils';
 import {AboutScreen} from '../AboutScreen';
 import {submitFeedback} from '../../../api/feedback';
+import {openReportEmailDraft} from '../../../utils/reportEmail';
 import {l10n} from '../../../locales';
 
 const render = (ui: React.ReactElement, options: any = {}) =>
@@ -32,6 +33,15 @@ jest.mock('../../../api/feedback', () => ({
   submitFeedback: jest.fn().mockResolvedValue(undefined),
 }));
 
+jest.mock('../../../utils/reportEmail', () => ({
+  REPORT_RECIPIENT_EMAIL: 'rduqu044@gmail.com',
+  openReportEmailDraft: jest.fn().mockResolvedValue({
+    recipient: 'rduqu044@gmail.com',
+    openedMailApp: true,
+    copiedBodyToClipboard: false,
+  }),
+}));
+
 jest.spyOn(Alert, 'alert');
 
 describe('AboutScreen', () => {
@@ -42,7 +52,7 @@ describe('AboutScreen', () => {
   it('renders correctly', () => {
     const {getByText} = render(<AboutScreen />);
 
-    expect(getByText('PocketPal AI')).toBeTruthy();
+    expect(getByText('LLMm')).toBeTruthy();
     expect(getByText('v1.0.0 (100)')).toBeTruthy();
     expect(getByText(l10n.en.about.supportProject)).toBeTruthy();
     expect(getByText(l10n.en.about.githubButton)).toBeTruthy();
@@ -62,7 +72,7 @@ describe('AboutScreen', () => {
   it('opens GitHub URL when GitHub button is pressed', () => {
     const {getByText} = render(<AboutScreen />);
 
-    fireEvent.press(getByText('Star on GitHub'));
+    fireEvent.press(getByText(l10n.en.about.githubButton));
 
     expect(Linking.openURL).toHaveBeenCalledWith(
       'https://github.com/a-ghorbani/pocketpal-ai',
@@ -191,6 +201,21 @@ describe('AboutScreen', () => {
       fireEvent.press(submitButton);
     });
 
-    expect(Alert.alert).toHaveBeenCalledWith('Error', 'API Error');
+    expect(openReportEmailDraft).toHaveBeenCalledWith({
+      reportType: 'feedback',
+      subject: 'LLMm feedback report',
+      payload: {
+        useCase: 'Test use case',
+        featureRequests: '',
+        generalFeedback: '',
+        usageFrequency: '',
+      },
+      submissionError: expect.any(Error),
+    });
+    expect(Alert.alert).toHaveBeenCalledWith(
+      'Email draft opened',
+      expect.stringContaining('rduqu044@gmail.com'),
+      expect.any(Array),
+    );
   });
 });

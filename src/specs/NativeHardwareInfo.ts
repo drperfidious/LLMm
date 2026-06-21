@@ -32,9 +32,25 @@ export interface GPUInfo {
   gpuType: string;
 }
 
+export interface MetalInfo {
+  isSupported: boolean;
+  name?: string;
+  reason?: string;
+  currentAllocatedSize?: number;
+  recommendedMaxWorkingSetSize?: number;
+  maxBufferLength?: number;
+  maxThreadgroupMemoryLength?: number;
+  hasUnifiedMemory?: boolean;
+  supportsFamilyApple7?: boolean;
+  supportsFamilyApple8?: boolean;
+  supportsFamilyMetal3?: boolean;
+  highestAppleFamily?: number;
+}
+
 export interface Spec extends TurboModule {
   getCPUInfo(): Promise<CPUInfo>;
   getGPUInfo(): Promise<GPUInfo>;
+  getMetalInfo(): Promise<MetalInfo>;
   getChipset?(): Promise<string>; // Android only
   /**
    * Get available memory in bytes from the operating system.

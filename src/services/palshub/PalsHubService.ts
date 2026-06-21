@@ -25,6 +25,10 @@ export class PalsHubError extends Error {
 class PalsHubService {
   constructor() {}
 
+  isConfigured(): boolean {
+    return palsHubApiService.isConfigured();
+  }
+
   // Browse and search Pals - Using REST API
   async getPals(query: PalsQuery = {}): Promise<PalsResponse> {
     return palsHubApiService.getPals(query);

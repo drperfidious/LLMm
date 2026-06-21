@@ -40,6 +40,8 @@ import {
   SettingsScreen,
   BenchmarkScreen,
   AboutScreen,
+  TalentsScreen,
+  DocumentsScreen,
 
   // Dev tools screen. Only available in debug mode.
   DevToolsScreen,
@@ -127,6 +129,22 @@ const App = observer(() => {
                         }}
                       />
                       <Drawer.Screen
+                        name={ROUTES.TALENTS}
+                        component={gestureHandlerRootHOC(TalentsScreen)}
+                        options={{
+                          headerStyle: styles.headerWithoutDivider,
+                          title: currentL10n.screenTitles.talents,
+                        }}
+                      />
+                      <Drawer.Screen
+                        name={ROUTES.DOCUMENTS}
+                        component={gestureHandlerRootHOC(DocumentsScreen)}
+                        options={{
+                          headerStyle: styles.headerWithoutDivider,
+                          title: currentL10n.screenTitles.documents,
+                        }}
+                      />
+                      <Drawer.Screen
                         name={ROUTES.BENCHMARK}
                         component={gestureHandlerRootHOC(BenchmarkScreen)}
                         options={{
@@ -164,26 +182,19 @@ const App = observer(() => {
                       )}
 
                       {/*
-                      E2E-only deep-link-driven benchmark matrix runner.
-                      Hidden from the drawer sidebar via
-                      drawerItemStyle:{display:'none'}; reachable only by
-                      the deep link pocketpal://e2e/benchmark in the e2e
-                      flavor build (see useDeepLinking cold-launch effect
-                      and android/app/src/e2e/AndroidManifest.xml).
+                      Private fit benchmark runner. Hidden from the drawer and
+                      opened from BenchmarkScreen; E2E builds can still reach it
+                      through the automation deep-link bridge.
                     */}
-                      {__E2E__ && (
-                        <Drawer.Screen
-                          name={ROUTES.BENCHMARK_RUNNER}
-                          component={gestureHandlerRootHOC(
-                            BenchmarkRunnerScreen,
-                          )}
-                          options={{
-                            headerStyle: styles.headerWithoutDivider,
-                            title: 'Benchmark Runner',
-                            drawerItemStyle: {display: 'none'},
-                          }}
-                        />
-                      )}
+                      <Drawer.Screen
+                        name={ROUTES.BENCHMARK_RUNNER}
+                        component={gestureHandlerRootHOC(BenchmarkRunnerScreen)}
+                        options={{
+                          headerStyle: styles.headerWithoutDivider,
+                          title: 'Benchmark Runner',
+                          drawerItemStyle: {display: 'none'},
+                        }}
+                      />
                     </Drawer.Navigator>
                     <TTSSetupSheet />
                     <HubRunSheetHost />

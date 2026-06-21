@@ -136,6 +136,7 @@ describe('ChatSessionStore — AssistantTurn extensions', () => {
         // now" — so the first updateActiveStepStreaming call goes
         // through the timer path.
         (chatSessionStore as any).lastStreamingUpdateTime = 2_000_000;
+        (chatSessionStore as any).lastStreamingPersistTime = 0;
         (chatSessionStore as any).pendingStreamingUpdate = null;
         if ((chatSessionStore as any).streamingThrottleTimer) {
           clearTimeout((chatSessionStore as any).streamingThrottleTimer);
@@ -409,6 +410,7 @@ describe('ChatSessionStore — AssistantTurn extensions', () => {
       dateNowSpy = jest.spyOn(Date, 'now').mockImplementation(() => mockTime);
       jest.useFakeTimers();
       (chatSessionStore as any).lastStreamingUpdateTime = 0;
+      (chatSessionStore as any).lastStreamingPersistTime = 0;
       (chatSessionStore as any).pendingStreamingUpdate = null;
       if ((chatSessionStore as any).streamingThrottleTimer) {
         clearTimeout((chatSessionStore as any).streamingThrottleTimer);

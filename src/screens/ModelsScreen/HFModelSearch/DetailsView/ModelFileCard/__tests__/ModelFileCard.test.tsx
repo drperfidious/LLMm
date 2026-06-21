@@ -1,5 +1,6 @@
 import React from 'react';
 import {Alert} from 'react-native';
+import {runInAction} from 'mobx';
 
 import {
   render as baseRender,
@@ -109,7 +110,7 @@ describe('ModelFileCard', () => {
   });
 
   it('handles download cancellation', async () => {
-    modelStore.models = [hfModel1];
+    modelStore.models = [{...hfModel1, isDownloading: true}];
 
     (downloadManager.isDownloading as jest.Mock).mockImplementation(modelId => {
       return modelId === hfModel1.id;
@@ -126,6 +127,82 @@ describe('ModelFileCard', () => {
     });
 
     expect(modelStore.cancelDownload).toHaveBeenCalledWith(hfModel1.id);
+  });
+
+  it('updates progress for a newly added downloading model without remounting', async () => {
+    modelStore.models = modelStore.models.filter(
+      model => model.id !== hfModel1.id,
+    );
+
+    const downloadingHFModel = createModel({
+      ...hfModel1,
+      isDownloaded: false,
+      isDownloading: true,
+      progress: 37,
+      downloadSpeed: '185 MB (4.2 MB/s) ETA: 2 min',
+    });
+
+    const {getByTestId, getByText, rerender} = render(
+      <ModelFileCard
+        modelFile={mockHFModel1.siblings[0]}
+        hfModel={mockHFModel1}
+      />,
+    );
+
+    expect(getByTestId('download-button')).toBeTruthy();
+
+    act(() => {
+      runInAction(() => {
+        modelStore.models = [...modelStore.models, downloadingHFModel];
+        modelStore.downloadRevision += 1;
+      });
+    });
+
+    rerender(
+      <ModelFileCard
+        modelFile={mockHFModel1.siblings[0]}
+        hfModel={mockHFModel1}
+      />,
+    );
+
+    expect(getByTestId('cancel-button')).toBeTruthy();
+    expect(getByText(/4.2 MB\/s/)).toBeTruthy();
+  });
+
+  it('updates progress when an existing HF model enters downloading state', async () => {
+    const {getByTestId, getByText, rerender} = render(
+      <ModelFileCard
+        modelFile={mockHFModel1.siblings[0]}
+        hfModel={mockHFModel1}
+      />,
+    );
+
+    expect(getByTestId('download-button')).toBeTruthy();
+
+    act(() => {
+      runInAction(() => {
+        const existingModel = modelStore.models.find(
+          model => model.id === hfModel1.id,
+        );
+        if (existingModel) {
+          existingModel.isDownloaded = false;
+          existingModel.isDownloading = true;
+          existingModel.progress = 51;
+          existingModel.downloadSpeed = '260 MB (5.1 MB/s) ETA: 1 min';
+        }
+        modelStore.downloadRevision += 1;
+      });
+    });
+
+    rerender(
+      <ModelFileCard
+        modelFile={mockHFModel1.siblings[0]}
+        hfModel={mockHFModel1}
+      />,
+    );
+
+    expect(getByTestId('cancel-button')).toBeTruthy();
+    expect(getByText(/5.1 MB\/s/)).toBeTruthy();
   });
 
   it('disables download button when storage is insufficient', () => {

@@ -3,6 +3,7 @@
 
 const mockPalsHubService = {
   // Methods
+  isConfigured: jest.fn().mockReturnValue(true),
   getPals: jest.fn().mockResolvedValue({pals: [], total: 0}),
   getPal: jest.fn().mockResolvedValue(null),
   getMyPals: jest.fn().mockResolvedValue(null),

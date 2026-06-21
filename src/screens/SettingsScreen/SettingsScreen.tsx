@@ -82,6 +82,9 @@ export const SettingsScreen: React.FC = observer(() => {
   const [isValidInput, setIsValidInput] = useState(true);
   const [showAdvancedSettings, setShowAdvancedSettings] = useState(false);
   const inputRef = useRef<RNTextInput>(null);
+  const lastSyncedModelIdRef = useRef<string | undefined>(
+    modelStore.activeModelId,
+  );
   const [showKeyCacheMenu, setShowKeyCacheMenu] = useState(false);
   const [showValueCacheMenu, setShowValueCacheMenu] = useState(false);
   const [showLanguageMenu, setShowLanguageMenu] = useState(false);
@@ -143,12 +146,15 @@ export const SettingsScreen: React.FC = observer(() => {
   // global n_ctx changes elsewhere (e.g. the chat banner's increase-context
   // flow). Skipped while the input is actively edited so it never fights typing.
   const configuredNCtx = modelStore.contextInitParams.n_ctx;
+  const activeModelId = modelStore.activeModelId;
+  const modelInitProfileRevision = modelStore.modelInitProfileRevision;
   useEffect(() => {
     if (isFocused && !inputRef.current?.isFocused()) {
       setContextSize(configuredNCtx.toString());
       setIsValidInput(true);
+      lastSyncedModelIdRef.current = activeModelId;
     }
-  }, [isFocused, configuredNCtx]);
+  }, [isFocused, configuredNCtx, activeModelId, modelInitProfileRevision]);
 
   // Compute current backend type based on device selection
   // Convert MobX observable to plain JS for dependency tracking
@@ -171,11 +177,25 @@ export const SettingsScreen: React.FC = observer(() => {
     };
   }, [debouncedUpdateStore]);
 
+  const commitContextSize = (text = contextSize) => {
+    const value = parseInt(text, 10);
+    if (!isNaN(value) && value >= modelStore.MIN_CONTEXT_SIZE) {
+      debouncedUpdateStore.cancel();
+      modelStore.setNContext(value);
+      setContextSize(value.toString());
+      setIsValidInput(true);
+      return;
+    }
+
+    debouncedUpdateStore.cancel();
+    setContextSize(modelStore.contextInitParams.n_ctx.toString());
+    setIsValidInput(true);
+  };
+
   const handleOutsidePress = () => {
     Keyboard.dismiss();
     inputRef.current?.blur();
-    setContextSize(modelStore.contextInitParams.n_ctx.toString());
-    setIsValidInput(true);
+    commitContextSize(contextSize);
     setShowKeyCacheMenu(false);
     setShowValueCacheMenu(false);
     setShowLanguageMenu(false);
@@ -192,6 +212,10 @@ export const SettingsScreen: React.FC = observer(() => {
     }
   };
 
+  const handleContextSizeBlur = () => {
+    commitContextSize(contextSize);
+  };
+
   const currentFlashAttnType =
     modelStore.contextInitParams.flash_attn_type ??
     (Platform.OS === 'ios' ? 'auto' : 'off');
@@ -200,11 +224,13 @@ export const SettingsScreen: React.FC = observer(() => {
   const cacheTypeKOptions = getAllowedCacheTypeKOptions(
     currentFlashAttnType as 'auto' | 'on' | 'off',
     currentBackend,
+    modelStore.contextInitParams.cache_type_v,
   );
 
   const cacheTypeVOptions = getAllowedCacheTypeVOptions(
     currentFlashAttnType as 'auto' | 'on' | 'off',
     currentBackend,
+    modelStore.contextInitParams.cache_type_k,
   );
 
   const getCacheTypeLabel = (
@@ -409,6 +435,7 @@ export const SettingsScreen: React.FC = observer(() => {
                   keyboardType="numeric"
                   value={contextSize}
                   onChangeText={handleContextSizeChange}
+                  onBlur={handleContextSizeBlur}
                   placeholder={t(l10n.settings.contextSizePlaceholder, {
                     minContextSize: modelStore.MIN_CONTEXT_SIZE.toString(),
                   })}
@@ -421,9 +448,13 @@ export const SettingsScreen: React.FC = observer(() => {
                   </Text>
                 )}
                 <Text variant="labelSmall" style={styles.textDescription}>
-                  {l10n.settings.modelReloadNotice}
+                  {t(l10n.settings.contextSizeDescription, {
+                    requestedContext: contextSize,
+                    effectiveContext: '',
+                  })}
                 </Text>
               </View>
+              <Divider />
 
               {/* Advanced Settings */}
               <List.Accordion

@@ -8,6 +8,8 @@ import {
   inferBackendType,
   isCacheTypeVSafe,
   isCacheTypeKSafe,
+  isTurboCachePairSafe,
+  isFlashAttnCachePairSafe,
   getAllowedCacheTypeVOptions,
   getAllowedCacheTypeKOptions,
   BackendType,
@@ -62,11 +64,11 @@ describe('flashAttnCompatibility', () => {
         });
       });
 
-      it('should return cpu', async () => {
+      it('should return explicit CPU or auto-detected OpenCL', async () => {
         expect(await inferBackendType(['CPU'])).toBe('cpu');
-        expect(await inferBackendType([])).toBe('cpu');
-        expect(await inferBackendType(undefined)).toBe('cpu');
-        expect(await inferBackendType()).toBe('cpu');
+        expect(await inferBackendType([])).toBe('opencl');
+        expect(await inferBackendType(undefined)).toBe('opencl');
+        expect(await inferBackendType()).toBe('opencl');
       });
 
       it('should return opencl when devices array contains GPU', async () => {
@@ -118,6 +120,7 @@ describe('flashAttnCompatibility', () => {
         {cacheType: CacheType.Q5_0, backend: 'cpu'},
         {cacheType: CacheType.Q5_1, backend: 'hexagon'},
         {cacheType: CacheType.IQ4_NL, backend: 'blas'},
+        {cacheType: CacheType.TURBO4, backend: 'metal'},
       ];
 
       testCases.forEach(({cacheType, backend}) => {
@@ -198,6 +201,9 @@ describe('flashAttnCompatibility', () => {
           CacheType.Q4_1,
           CacheType.Q4_0,
           CacheType.IQ4_NL,
+          CacheType.TURBO4,
+          CacheType.TURBO3,
+          CacheType.TURBO2,
         ];
 
         quantizedTypes.forEach(cacheType => {
@@ -250,6 +256,73 @@ describe('flashAttnCompatibility', () => {
     });
   });
 
+  describe('isTurboCachePairSafe', () => {
+    it('allows Metal Turbo pairs with f16, q8_0, or another Turbo cache', () => {
+      expect(
+        isTurboCachePairSafe(CacheType.Q8_0, CacheType.TURBO4, 'metal').safe,
+      ).toBe(true);
+      expect(
+        isTurboCachePairSafe(CacheType.TURBO4, CacheType.F16, 'metal').safe,
+      ).toBe(true);
+      expect(
+        isTurboCachePairSafe(CacheType.TURBO3, CacheType.TURBO2, 'metal').safe,
+      ).toBe(true);
+    });
+
+    it('rejects unsupported Turbo companions and non-Metal/CPU backends', () => {
+      const badCompanion = isTurboCachePairSafe(
+        CacheType.Q4_0,
+        CacheType.TURBO4,
+        'metal',
+      );
+      expect(badCompanion.safe).toBe(false);
+      expect(badCompanion.reason).toContain('cache pairs');
+
+      const badBackend = isTurboCachePairSafe(
+        CacheType.Q8_0,
+        CacheType.TURBO4,
+        'opencl',
+      );
+      expect(badBackend.safe).toBe(false);
+      expect(badBackend.reason).toContain('Metal/CPU');
+    });
+  });
+
+  describe('isFlashAttnCachePairSafe', () => {
+    it('allows matching non-Turbo Metal flash attention pairs', () => {
+      expect(
+        isFlashAttnCachePairSafe(
+          CacheType.Q8_0,
+          CacheType.Q8_0,
+          'on',
+          'metal',
+        ).safe,
+      ).toBe(true);
+    });
+
+    it('rejects mismatched non-Turbo Metal flash attention pairs', () => {
+      const result = isFlashAttnCachePairSafe(
+        CacheType.Q8_0,
+        CacheType.F16,
+        'on',
+        'metal',
+      );
+      expect(result.safe).toBe(false);
+      expect(result.reason).toContain('matching non-Turbo');
+    });
+
+    it('does not restrict mismatched pairs when flash attention is off', () => {
+      expect(
+        isFlashAttnCachePairSafe(
+          CacheType.Q8_0,
+          CacheType.F16,
+          'off',
+          'metal',
+        ).safe,
+      ).toBe(true);
+    });
+  });
+
   describe('getAllowedCacheTypeVOptions', () => {
     it('should disable quantized options when flash_attn=off', () => {
       const options = getAllowedCacheTypeVOptions('off', 'metal');
@@ -264,7 +337,7 @@ describe('flashAttnCompatibility', () => {
       expect(q4Option?.disabled).toBe(true);
     });
 
-    it('should enable all options for Metal with flash_attn=on', () => {
+    it('should enable all options for Metal with flash_attn=on and no Turbo companion', () => {
       const options = getAllowedCacheTypeVOptions('on', 'metal');
 
       options.forEach(option => {
@@ -300,6 +373,46 @@ describe('flashAttnCompatibility', () => {
       });
     });
 
+    it('should disable only unsupported V companions when K is Turbo', () => {
+      const options = getAllowedCacheTypeVOptions(
+        'on',
+        'metal',
+        CacheType.TURBO4,
+      );
+      expect(options.find(o => o.value === CacheType.F16)?.disabled).toBe(
+        false,
+      );
+      expect(options.find(o => o.value === CacheType.Q8_0)?.disabled).toBe(
+        false,
+      );
+      expect(options.find(o => o.value === CacheType.TURBO3)?.disabled).toBe(
+        false,
+      );
+      expect(options.find(o => o.value === CacheType.Q4_0)?.disabled).toBe(
+        true,
+      );
+      expect(options.find(o => o.value === CacheType.IQ4_NL)?.disabled).toBe(
+        true,
+      );
+    });
+
+    it('should disable mismatched non-Turbo V companions for Metal flash attention', () => {
+      const options = getAllowedCacheTypeVOptions(
+        'on',
+        'metal',
+        CacheType.Q8_0,
+      );
+      expect(options.find(o => o.value === CacheType.Q8_0)?.disabled).toBe(
+        false,
+      );
+      expect(options.find(o => o.value === CacheType.F16)?.disabled).toBe(
+        true,
+      );
+      expect(options.find(o => o.value === CacheType.Q4_0)?.disabled).toBe(
+        true,
+      );
+    });
+
     it('should disable quantized options for Hexagon with flash_attn=auto', () => {
       const options = getAllowedCacheTypeVOptions('auto', 'hexagon');
       const f16Option = options.find(o => o.value === CacheType.F16);
@@ -312,24 +425,61 @@ describe('flashAttnCompatibility', () => {
   });
 
   describe('getAllowedCacheTypeKOptions', () => {
-    it('should never disable any options', () => {
+    it('should disable Turbo K options outside Metal/CPU', () => {
       const flashAttnTypes: FlashAttnType[] = ['auto', 'on', 'off'];
-      const backends: BackendType[] = [
-        'metal',
-        'opencl',
-        'cpu',
-        'hexagon',
-        'blas',
-      ];
+      const backends: BackendType[] = ['opencl', 'hexagon', 'blas'];
 
       flashAttnTypes.forEach(flashAttn => {
         backends.forEach(backend => {
           const options = getAllowedCacheTypeKOptions(flashAttn, backend);
-          options.forEach(option => {
-            expect(option.disabled).toBe(false);
-          });
+          expect(options.find(o => o.value === CacheType.TURBO4)?.disabled).toBe(
+            true,
+          );
+          expect(options.find(o => o.value === CacheType.Q8_0)?.disabled).toBe(
+            false,
+          );
         });
       });
+    });
+
+    it('should disable unsupported K companions when V is Turbo', () => {
+      const options = getAllowedCacheTypeKOptions(
+        'on',
+        'metal',
+        CacheType.TURBO4,
+      );
+      expect(options.find(o => o.value === CacheType.F16)?.disabled).toBe(
+        false,
+      );
+      expect(options.find(o => o.value === CacheType.Q8_0)?.disabled).toBe(
+        false,
+      );
+      expect(options.find(o => o.value === CacheType.TURBO3)?.disabled).toBe(
+        false,
+      );
+      expect(options.find(o => o.value === CacheType.Q4_0)?.disabled).toBe(
+        true,
+      );
+      expect(options.find(o => o.value === CacheType.IQ4_NL)?.disabled).toBe(
+        true,
+      );
+    });
+
+    it('should disable mismatched non-Turbo K companions for Metal flash attention', () => {
+      const options = getAllowedCacheTypeKOptions(
+        'on',
+        'metal',
+        CacheType.Q8_0,
+      );
+      expect(options.find(o => o.value === CacheType.Q8_0)?.disabled).toBe(
+        false,
+      );
+      expect(options.find(o => o.value === CacheType.F16)?.disabled).toBe(
+        true,
+      );
+      expect(options.find(o => o.value === CacheType.Q4_0)?.disabled).toBe(
+        true,
+      );
     });
 
     it('should return all cache type options', () => {

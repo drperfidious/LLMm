@@ -53,8 +53,8 @@ export type AgentEvent =
        * attached when the step actually invoked tools. Optional because
        * text-only steps and the final step of a multi-turn chain don't
        * have any. When present, ids are reconciled with outcome callIds
-       * via {@link normalizeToolCallIds} — the hook's `appendToolCall`
-       * writer relies on this to make
+       * by the runner's final-call normalization path — the hook's
+       * `appendToolCall` writer relies on this to make
        * `step.toolCalls[i].id === outcome.callId` true by construction.
        */
       toolCalls?: AgentToolCall[];
@@ -110,6 +110,9 @@ export interface AgentRunOptions {
   /** Pre-created message id for this run. The runner uses it only for
    * `run_started`; it does NOT touch any store. */
   messageId: string;
+  /** When false, the runner treats the turn as plain chat even if the
+   * model emits text-wrapped or native tool calls. */
+  enableToolCalls?: boolean;
   maxTurns?: number;
   signal?: AbortSignal;
 }

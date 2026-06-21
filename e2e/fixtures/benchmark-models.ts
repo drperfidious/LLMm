@@ -160,6 +160,18 @@ export const BENCHMARK_FULL_MODELS: ModelTestConfig[] = [
       {quant: 'q8_0', downloadFile: 'SmolLM2-1.7B-Instruct-Q8_0.gguf'},
     ],
   },
+  {
+    id: 'smollm3-3b',
+    searchQuery: 'bartowski HuggingFaceTB_SmolLM3-3B',
+    selectorText: 'HuggingFaceTB_SmolLM3-3B',
+    downloadFile: 'HuggingFaceTB_SmolLM3-3B-Q4_K_M.gguf',
+    downloadTimeout: 600000,
+    prompts: [{input: 'Hi'}],
+    quants: [
+      // Confirmed by bundled iOS device rules as the recommended 3B fit rung.
+      {quant: 'q4_k_m', downloadFile: 'HuggingFaceTB_SmolLM3-3B-Q4_K_M.gguf'},
+    ],
+  },
   // --- Latest-gen Qwen3.5 ---
   {
     id: 'qwen3.5-0.8b',
@@ -206,12 +218,24 @@ export const BENCHMARK_FULL_MODELS: ModelTestConfig[] = [
     downloadTimeout: 600000,
     prompts: [{input: 'Hi'}],
     quants: [
-      {quant: 'iq1_s', downloadFile: 'DeepSeek-R1-Distill-Qwen-1.5B-IQ2_M.gguf'},
+      {
+        quant: 'iq1_s',
+        downloadFile: 'DeepSeek-R1-Distill-Qwen-1.5B-IQ2_M.gguf',
+      },
       {quant: 'q2_k', downloadFile: 'DeepSeek-R1-Distill-Qwen-1.5B-Q2_K.gguf'},
-      {quant: 'q3_k_m', downloadFile: 'DeepSeek-R1-Distill-Qwen-1.5B-Q3_K_M.gguf'},
+      {
+        quant: 'q3_k_m',
+        downloadFile: 'DeepSeek-R1-Distill-Qwen-1.5B-Q3_K_M.gguf',
+      },
       {quant: 'q4_0', downloadFile: 'DeepSeek-R1-Distill-Qwen-1.5B-Q4_0.gguf'},
-      {quant: 'q4_k_m', downloadFile: 'DeepSeek-R1-Distill-Qwen-1.5B-Q4_K_M.gguf'},
-      {quant: 'q5_k_m', downloadFile: 'DeepSeek-R1-Distill-Qwen-1.5B-Q5_K_M.gguf'},
+      {
+        quant: 'q4_k_m',
+        downloadFile: 'DeepSeek-R1-Distill-Qwen-1.5B-Q4_K_M.gguf',
+      },
+      {
+        quant: 'q5_k_m',
+        downloadFile: 'DeepSeek-R1-Distill-Qwen-1.5B-Q5_K_M.gguf',
+      },
       {quant: 'q6_k', downloadFile: 'DeepSeek-R1-Distill-Qwen-1.5B-Q6_K.gguf'},
       {quant: 'q8_0', downloadFile: 'DeepSeek-R1-Distill-Qwen-1.5B-Q8_0.gguf'},
     ],
@@ -263,12 +287,24 @@ export const BENCHMARK_FULL_MODELS: ModelTestConfig[] = [
     downloadTimeout: 600000,
     prompts: [{input: 'Hi'}],
     quants: [
-      {quant: 'iq1_s', downloadFile: 'microsoft_Phi-4-mini-instruct-IQ2_M.gguf'},
+      {
+        quant: 'iq1_s',
+        downloadFile: 'microsoft_Phi-4-mini-instruct-IQ2_M.gguf',
+      },
       {quant: 'q2_k', downloadFile: 'microsoft_Phi-4-mini-instruct-Q2_K.gguf'},
-      {quant: 'q3_k_m', downloadFile: 'microsoft_Phi-4-mini-instruct-Q3_K_M.gguf'},
+      {
+        quant: 'q3_k_m',
+        downloadFile: 'microsoft_Phi-4-mini-instruct-Q3_K_M.gguf',
+      },
       {quant: 'q4_0', downloadFile: 'microsoft_Phi-4-mini-instruct-Q4_0.gguf'},
-      {quant: 'q4_k_m', downloadFile: 'microsoft_Phi-4-mini-instruct-Q4_K_M.gguf'},
-      {quant: 'q5_k_m', downloadFile: 'microsoft_Phi-4-mini-instruct-Q5_K_M.gguf'},
+      {
+        quant: 'q4_k_m',
+        downloadFile: 'microsoft_Phi-4-mini-instruct-Q4_K_M.gguf',
+      },
+      {
+        quant: 'q5_k_m',
+        downloadFile: 'microsoft_Phi-4-mini-instruct-Q5_K_M.gguf',
+      },
       {quant: 'q6_k', downloadFile: 'microsoft_Phi-4-mini-instruct-Q6_K.gguf'},
       {quant: 'q8_0', downloadFile: 'microsoft_Phi-4-mini-instruct-Q8_0.gguf'},
     ],
@@ -492,11 +528,11 @@ export function getBenchmarkMatrix(): {
       : undefined;
 
   const rawTier = (process.env.BENCH_TIER || 'smoke').toLowerCase();
-  const tier = ((['smoke', 'focused', 'full'] as const).includes(
-    rawTier as BenchmarkTier,
-  )
-    ? rawTier
-    : 'smoke') as BenchmarkTier;
+  const tier = (
+    (['smoke', 'focused', 'full'] as const).includes(rawTier as BenchmarkTier)
+      ? rawTier
+      : 'smoke'
+  ) as BenchmarkTier;
   const tierSpec = BENCHMARK_TIERS[tier];
 
   const modelFilter = parseCsv(process.env.BENCH_MODELS);

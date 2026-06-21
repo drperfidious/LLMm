@@ -3,7 +3,7 @@
     "screenTitle": "應用程式資訊",
     "description": "一個能把語言模型直接帶到你手機上的應用程式，基於 llama.cpp 與 llama.rn 構建。",
     "supportProject": "支援此專案",
-    "supportProjectDescription": "如果您喜歡使用 PocketPal AI，請考慮透過以下方式支援此專案：",
+    "supportProjectDescription": "如果您喜歡使用 LLMm，請考慮透過以下方式支援此專案：",
     "githubButton": "在 GitHub 上點讚",
     "orText": "或",
     "orBy": "或通過",
@@ -720,10 +720,10 @@
   },
   "feedback": {
     "title": "送出反饋",
-    "description": "您的意見對我們非常重要！請告訴我們 PocketPal AI 如何對您有所幫助，以及我們還可以做些什麼來讓它變得更好用。",
+    "description": "您的意見對我們非常重要！請告訴我們 LLMm 如何對您有所幫助，以及我們還可以做些什麼來讓它變得更好用。",
     "shareThoughtsButton": "分享您的想法",
     "useCase": {
-      "label": "您正在使用 PocketPal AI 做什麼？",
+      "label": "您正在使用 LLMm 做什麼？",
       "placeholder": "例如：摘要、角色扮演等。"
     },
     "featureRequests": {
@@ -735,7 +735,7 @@
       "placeholder": "分享您可能有的其他想法。"
     },
     "usageFrequency": {
-      "label": "您多久使用一次 PocketPal AI？（可選）",
+      "label": "您多久使用一次 LLMm？（可選）",
       "options": {
         "daily": "每日",
         "weekly": "每週",

@@ -11,6 +11,7 @@ import {
   chatSessionStore,
   modelStore,
   palStore,
+  talentStore,
   ttsStore,
   uiStore,
 } from '../store';
@@ -27,16 +28,49 @@ import {
   CompletionResult,
   CompletionResultSnapshot,
 } from '../utils/completionTypes';
-import {talentRegistry} from '../services/talents';
+import {deriveToolSchemas, talentRegistry} from '../services/talents';
 import type {ToolDefinition} from '../services/talents/types';
 import {
   agentStateReducer,
   createTriggerMarkerCache,
   initialAgentUiState,
+  resolveToolIntentSystemMessages,
   runAgent,
   type AgentEvent,
   type AgentUiState,
 } from '../services/agent';
+
+function uniqueNames(names: string[]): string[] {
+  return Array.from(new Set(names.filter(Boolean)));
+}
+
+function deriveToolSchemasWithCustom(talentNames: string[]): ToolDefinition[] {
+  const names = uniqueNames(talentNames);
+  return [
+    ...deriveToolSchemas(names),
+    ...talentStore.deriveCustomToolSchemas(names),
+  ];
+}
+
+function mergeDefaultAgentTools(tools: ToolDefinition[]): ToolDefinition[] {
+  const existingNames = new Set(
+    tools
+      .map(tool => tool.function?.name)
+      .filter((name): name is string => typeof name === 'string' && !!name),
+  );
+  const missingDefaults = talentStore
+    .getDefaultAgentTalentNames()
+    .filter(name => !existingNames.has(name));
+  if (missingDefaults.length === 0) {
+    return tools;
+  }
+  return [...tools, ...deriveToolSchemasWithCustom(missingDefaults)];
+}
+
+function resolveAllowedAgentTalents(palTalentNames: string[]): string[] {
+  return talentStore.resolveAllowedAgentTalentNames(palTalentNames);
+}
+
 // Helper function to prepare completion parameters using OpenAI-compatible
 // messages API. Creates the empty `assistant_turn` row up-front so the
 // active-vs-persisted predicate sees the right "last message" before the
@@ -64,6 +98,7 @@ const prepareCompletion = async ({
 }) => {
   const sessionCompletionSettings =
     await chatSessionStore.getCurrentCompletionSettings();
+  const isAgentMode = chatSessionStore.chatMode === 'agent';
   const stopWords = toJS(modelStore.activeModel?.stopWords);
 
   // Check if we have images and if multimodal is enabled
@@ -120,8 +155,24 @@ const prepareCompletion = async ({
     });
   }
 
+  const tools = isAgentMode
+    ? mergeDefaultAgentTools(
+        (sessionCompletionSettings.tools as ToolDefinition[] | undefined) ?? [],
+      )
+    : [];
+  const toolIntentSystemMessages = resolveToolIntentSystemMessages({
+    messageText: message.text,
+    tools,
+    keywordHints: talentStore.getKeywordHintsForToolNames(
+      tools
+        .map(tool => tool.function?.name)
+        .filter((name): name is string => typeof name === 'string' && !!name),
+    ),
+  });
+
   const messages = [
     ...systemMessages,
+    ...toolIntentSystemMessages,
     ...chatMessages,
     {
       role: 'user',
@@ -134,6 +185,15 @@ const prepareCompletion = async ({
     messages,
     stop: stopWords,
   };
+  if (isAgentMode) {
+    (completionParamsWithAppProps as CompletionParams).tools = tools;
+    (completionParamsWithAppProps as CompletionParams).tool_choice =
+      (completionParamsWithAppProps as CompletionParams).tool_choice ?? 'auto';
+  } else {
+    delete (completionParamsWithAppProps as Record<string, unknown>).tools;
+    delete (completionParamsWithAppProps as Record<string, unknown>)
+      .tool_choice;
+  }
 
   const cleanCompletionParams = toApiCompletionParams(
     completionParamsWithAppProps as CompletionParams,
@@ -213,6 +273,7 @@ function deriveSnapshotFromResult(
     content: result.content,
     reasoning_content: result.reasoning_content,
     used,
+    nCtx: effectiveNCtx,
     contextFull,
     tokensPredicted: result.tokens_predicted,
     finishReason,
@@ -511,9 +572,13 @@ export const useChatSession = (
 
     currentMessageInfo.current = messageInfo;
 
-    // Allowed talent names for this Pal. The runner rejects any
-    // tool call whose function.name isn't in this list.
-    const palTalents = (pal?.pact?.talents ?? []).map(t => t.name);
+    // Allowed talent names for this turn. Safe default Agent talents are
+    // always available in Agent mode; side-effect talents still require the
+    // active Pal's PACT opt-in.
+    const isAgentMode = chatSessionStore.chatMode === 'agent';
+    const palTalents = isAgentMode
+      ? resolveAllowedAgentTalents((pal?.pact?.talents ?? []).map(t => t.name))
+      : [];
 
     abortRef.current = new AbortController();
     const completionStartTime = Date.now();
@@ -534,8 +599,9 @@ export const useChatSession = (
     // defeating marker detection. Failure is non-fatal: we fall back
     // to `[]` and let `tool_call_started` drive the UX flip (one beat
     // later) instead of `marker_seen`.
-    const tools =
-      (cleanCompletionParams.tools as ToolDefinition[] | undefined) ?? [];
+    const tools = isAgentMode
+      ? ((cleanCompletionParams.tools as ToolDefinition[] | undefined) ?? [])
+      : [];
     let triggerMarkers: string[] = [];
     // Marker detection reads `grammar_triggers` from a local Jinja
     // `getFormattedChat` call — only meaningful when a local llama.rn
@@ -567,9 +633,11 @@ export const useChatSession = (
         engine,
         initialParams: cleanCompletionParams as ApiCompletionParams,
         allowedTalentNames: palTalents,
-        talentLookup: name => talentRegistry.get(name),
+        talentLookup: name =>
+          talentRegistry.get(name) ?? talentStore.getCustomTalentEngine(name),
         triggerMarkers,
         messageId: messageInfo.id,
+        enableToolCalls: isAgentMode,
         signal: abortRef.current.signal,
       });
 

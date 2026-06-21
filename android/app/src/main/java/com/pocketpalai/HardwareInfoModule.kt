@@ -215,6 +215,13 @@ class HardwareInfoModule(reactContext: ReactApplicationContext) :
     }
   }
 
+  override fun getMetalInfo(promise: Promise) {
+    promise.resolve(Arguments.createMap().apply {
+      putBoolean("isSupported", false)
+      putString("reason", "Metal is only available on Apple platforms")
+    })
+  }
+
   override fun getAvailableMemory(promise: Promise) {
     try {
       val activityManager = reactApplicationContext
@@ -335,4 +342,3 @@ class HardwareInfoModule(reactContext: ReactApplicationContext) :
     }
   }
 }
-

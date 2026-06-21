@@ -8,13 +8,23 @@ import {
   Alert,
   ScrollView,
   Image,
+  Modal,
+  Platform,
 } from 'react-native';
+import {
+  errorCodes,
+  isErrorWithCode,
+  pick,
+  types,
+} from '@react-native-documents/picker';
 import {launchCamera, launchImageLibrary} from 'react-native-image-picker';
 import {useCameraPermission} from 'react-native-vision-camera';
 import ReactNativeHapticFeedback from 'react-native-haptic-feedback';
+import Share from 'react-native-share';
 
 import {observer} from 'mobx-react';
 import {IconButton, Text} from 'react-native-paper';
+import Icon from 'react-native-vector-icons/MaterialCommunityIcons';
 
 import {hasVideoCapability} from '../../utils/pal-capabilities';
 
@@ -29,12 +39,28 @@ import {useTheme} from '../../hooks';
 
 import {createStyles} from './styles';
 
-import {chatSessionStore, modelStore, palStore, uiStore} from '../../store';
+import {
+  chatSessionStore,
+  modelStore,
+  palStore,
+  ttsStore,
+  uiStore,
+} from '../../store';
 
 import {MessageType} from '../../utils/types';
-import {L10nContext, UserContext} from '../../utils';
+import {L10nContext, UserContext, randId} from '../../utils';
 
 import {SendButton, StopButton, Menu, VoiceChip} from '..';
+import {
+  dirname,
+  formatBytes,
+  formatDocumentForChat,
+  isTextLikeWorkspacePath,
+  languageForWorkspacePath,
+  sanitizeWorkspaceFileName,
+  workspaceFileSystem,
+  type WorkspaceEntry,
+} from '../../services/workspace';
 
 export interface ChatInputTopLevelProps {
   /** Whether the AI is currently streaming tokens */
@@ -148,9 +174,27 @@ export const ChatInput = observer(
       onDefaultImagesChange ?? setInternalSelectedImages;
     // State for image upload menu
     const [showImageUploadMenu, setShowImageUploadMenu] = React.useState(false);
+    const [showWorkspaceMenu, setShowWorkspaceMenu] = React.useState(false);
+    const [workspaceEntries, setWorkspaceEntries] = React.useState<
+      WorkspaceEntry[]
+    >([]);
+    const [workspaceFiles, setWorkspaceFiles] = React.useState<
+      WorkspaceEntry[]
+    >([]);
+    const [workspaceStatus, setWorkspaceStatus] = React.useState('');
+    const [cwdDialogVisible, setCwdDialogVisible] = React.useState(false);
+    const [cwdDraft, setCwdDraft] = React.useState(
+      chatSessionStore.workspaceCwd,
+    );
     // State for showing "model not loaded" helper text
     const [showModelWarning, setShowModelWarning] = React.useState(false);
     const isEditMode = chatSessionStore.isEditMode;
+    const isAgentMode = chatSessionStore.chatMode === 'agent';
+    const workspaceCwd = chatSessionStore.workspaceCwd || '/';
+    const isVoicePlaying =
+      ttsStore.playbackState.mode === 'playing' ||
+      ttsStore.playbackState.mode === 'streaming';
+    const shouldShowVoiceChip = !isAgentMode || isVoicePlaying;
 
     const styles = createStyles({theme, isEditMode});
 
@@ -225,6 +269,163 @@ export const ChatInput = observer(
         setText('');
         // Clear selected images after sending
         setSelectedImages([]);
+      }
+    };
+
+    const refreshWorkspaceMenu = React.useCallback(async () => {
+      try {
+        const [entries, files] = await Promise.all([
+          workspaceFileSystem.list('.', workspaceCwd),
+          workspaceFileSystem.listFiles('', '', {maxEntries: 40}),
+        ]);
+        setWorkspaceEntries(entries);
+        setWorkspaceFiles(files);
+        setWorkspaceStatus('');
+      } catch (error) {
+        setWorkspaceStatus(
+          error instanceof Error ? error.message : 'Could not read workspace',
+        );
+      }
+    }, [workspaceCwd]);
+
+    const openWorkspaceMenu = () => {
+      setShowWorkspaceMenu(true);
+      refreshWorkspaceMenu();
+    };
+
+    const addWorkspaceNote = async (
+      text: string,
+      metadata: Record<string, any>,
+    ) => {
+      if (!user) {
+        return;
+      }
+      const message: MessageType.Text = {
+        id: randId(),
+        type: 'text',
+        text,
+        author: user,
+        createdAt: Date.now(),
+        status: 'sent',
+        metadata,
+      };
+      await chatSessionStore.addMessageToCurrentSession(message);
+    };
+
+    const changeWorkspaceCwd = async (path: string) => {
+      try {
+        const next = await workspaceFileSystem.assertDirectory(
+          path || '/',
+          workspaceCwd,
+        );
+        chatSessionStore.setWorkspaceCwd(next);
+        setCwdDraft(next);
+        setWorkspaceStatus(`CWD set to ${next}`);
+        setShowWorkspaceMenu(false);
+      } catch (error) {
+        setWorkspaceStatus(
+          error instanceof Error ? error.message : 'Could not change directory',
+        );
+      }
+    };
+
+    const handleImportWorkspaceFiles = async () => {
+      try {
+        setShowWorkspaceMenu(false);
+        const picked = await pick({
+          mode: 'import',
+          allowMultiSelection: true,
+          type: Platform.OS === 'ios' ? 'public.data' : [types.allFiles],
+        });
+        const imported: WorkspaceEntry[] = [];
+        for (const file of picked) {
+          const name = sanitizeWorkspaceFileName(file.name);
+          const target = await workspaceFileSystem.getAvailablePath(
+            name,
+            workspaceCwd,
+          );
+          const result = await workspaceFileSystem.importFile(file.uri, target);
+          imported.push({
+            name: result.path.split('/').pop() ?? result.path,
+            path: result.path,
+            type: 'file',
+            size: result.size,
+          });
+        }
+
+        if (imported.length > 0) {
+          await addWorkspaceNote(
+            [
+              `Imported ${imported.length} workspace file(s) into ${workspaceCwd}:`,
+              '',
+              ...imported.map(
+                entry => `- ${entry.path} (${formatBytes(entry.size)})`,
+              ),
+            ].join('\n'),
+            {
+              source: 'workspace_import',
+              workspacePaths: imported.map(entry => entry.path),
+            },
+          );
+          setWorkspaceStatus(`Imported ${imported.length} file(s).`);
+        }
+        await refreshWorkspaceMenu();
+      } catch (error) {
+        if (
+          isErrorWithCode(error) &&
+          error.code === errorCodes.OPERATION_CANCELED
+        ) {
+          return;
+        }
+        setWorkspaceStatus('Import failed.');
+      }
+    };
+
+    const handleCloneWorkspaceFile = async (entry: WorkspaceEntry) => {
+      if (!isTextLikeWorkspacePath(entry.path)) {
+        setWorkspaceStatus('Only text-like files can be cloned into chat.');
+        return;
+      }
+      try {
+        const result = await workspaceFileSystem.readFile(
+          entry.path,
+          '',
+          256 * 1024,
+        );
+        await addWorkspaceNote(
+          formatDocumentForChat({
+            path: result.path,
+            content: result.content,
+            language: languageForWorkspacePath(result.path),
+          }),
+          {
+            source: 'workspace_document_clone',
+            workspacePath: result.path,
+          },
+        );
+        setWorkspaceStatus(`Cloned ${entry.path} into chat.`);
+        setShowWorkspaceMenu(false);
+      } catch (error) {
+        setWorkspaceStatus(
+          error instanceof Error ? error.message : 'Could not clone file',
+        );
+      }
+    };
+
+    const handleExportWorkspaceFile = async (entry: WorkspaceEntry) => {
+      try {
+        const {absolutePath} = workspaceFileSystem.resolve(entry.path);
+        await Share.open({
+          title: entry.name,
+          url: absolutePath.startsWith('file://')
+            ? absolutePath
+            : `file://${absolutePath}`,
+          failOnCancel: false,
+        });
+        setWorkspaceStatus('');
+        setShowWorkspaceMenu(false);
+      } catch {
+        setWorkspaceStatus('Could not export file.');
       }
     };
 
@@ -345,6 +546,23 @@ export const ChatInput = observer(
     const plusColor = isPlusButtonEnabled
       ? onSurfaceColor
       : onSurfaceColorVariant;
+    const isModeToggleDisabled = isStreaming || !!isStopVisible;
+    const setChatMode = (mode: 'chat' | 'agent') => {
+      if (!isModeToggleDisabled) {
+        chatSessionStore.setChatMode(mode);
+      }
+    };
+    const currentDirectories = workspaceEntries
+      .filter(entry => entry.type === 'directory')
+      .slice(0, 8);
+    const recentFiles = workspaceFiles.slice(0, 12);
+    const cloneableFiles = workspaceFiles
+      .filter(entry => isTextLikeWorkspacePath(entry.path))
+      .slice(0, 12);
+    const parentRel = dirname(workspaceCwd);
+    const parentPath = parentRel ? `/${parentRel}` : '/';
+    const shortCwd =
+      workspaceCwd.length > 24 ? `…${workspaceCwd.slice(-23)}` : workspaceCwd;
 
     return (
       <View style={styles.container}>
@@ -493,54 +711,193 @@ export const ChatInput = observer(
                 </Menu>
               )}
 
-              {/* Pal Selector */}
+              {/* Workspace Menu */}
               <View style={styles.palSelector}>
-                <TouchableOpacity
-                  style={[
-                    styles.palBtn,
-                    {
-                      backgroundColor:
-                        uiStore.colorScheme === 'dark'
-                          ? theme.colors.inverseOnSurface
-                          : theme.colors.inverseSurface,
-                    },
-                    currentActivePal?.color && {
-                      backgroundColor: currentActivePal?.color?.[0],
-                    },
-                  ]}
-                  onPress={onPalBtnPress}
-                  accessibilityLabel="Select Pal"
-                  accessibilityRole="button">
-                  <Animated.View
-                    style={{
-                      transform: [{rotate: rotateInterpolate}],
-                    }}>
-                    <ChevronUpIcon stroke={inputBackgroundColor} />
-                  </Animated.View>
-                </TouchableOpacity>
+                <Menu
+                  visible={showWorkspaceMenu}
+                  onDismiss={() => setShowWorkspaceMenu(false)}
+                  anchorPosition="top"
+                  anchor={
+                    <TouchableOpacity
+                      style={[
+                        styles.palBtn,
+                        {
+                          backgroundColor:
+                            uiStore.colorScheme === 'dark'
+                              ? theme.colors.inverseOnSurface
+                              : theme.colors.inverseSurface,
+                        },
+                      ]}
+                      onPress={openWorkspaceMenu}
+                      accessibilityLabel="Chat workspace menu"
+                      accessibilityRole="button"
+                      testID="chat-workspace-menu-button">
+                      <Animated.View
+                        style={{
+                          transform: [{rotate: rotateInterpolate}],
+                        }}>
+                        <ChevronUpIcon stroke={inputBackgroundColor} />
+                      </Animated.View>
+                    </TouchableOpacity>
+                  }>
+                  <Menu.Item
+                    label={`CWD ${workspaceCwd}`}
+                    icon="folder-outline"
+                    disabled
+                  />
+                  <Menu.Item
+                    label="Import files"
+                    icon="file-import-outline"
+                    onPress={handleImportWorkspaceFiles}
+                  />
+                  <Menu.Item
+                    label="Clone file into chat"
+                    icon="file-document-outline"
+                    disabled={cloneableFiles.length === 0}
+                    submenu={cloneableFiles.map(entry => (
+                      <Menu.Item
+                        key={`clone-${entry.path}`}
+                        label={entry.path}
+                        onPress={() => handleCloneWorkspaceFile(entry)}
+                      />
+                    ))}
+                  />
+                  <Menu.Item
+                    label="Export file"
+                    icon="export-variant"
+                    disabled={recentFiles.length === 0}
+                    submenu={recentFiles.map(entry => (
+                      <Menu.Item
+                        key={`export-${entry.path}`}
+                        label={entry.path}
+                        onPress={() => handleExportWorkspaceFile(entry)}
+                      />
+                    ))}
+                  />
+                  <Menu.Item
+                    label="Change directory"
+                    icon="folder-sync-outline"
+                    submenu={[
+                      <Menu.Item
+                        key="root"
+                        label="/"
+                        onPress={() => changeWorkspaceCwd('/')}
+                      />,
+                      <Menu.Item
+                        key="parent"
+                        label="Parent"
+                        disabled={workspaceCwd === '/'}
+                        onPress={() => changeWorkspaceCwd(parentPath)}
+                      />,
+                      ...currentDirectories.map(entry => (
+                        <Menu.Item
+                          key={`dir-${entry.path}`}
+                          label={entry.path}
+                          onPress={() => changeWorkspaceCwd(entry.path)}
+                        />
+                      )),
+                      <Menu.Item
+                        key="custom"
+                        label="Type path…"
+                        onPress={() => {
+                          setCwdDraft(workspaceCwd);
+                          setShowWorkspaceMenu(false);
+                          setCwdDialogVisible(true);
+                        }}
+                      />,
+                    ]}
+                  />
+                  {workspaceStatus ? (
+                    <Menu.Item label={workspaceStatus} disabled />
+                  ) : null}
+                </Menu>
+                <Text
+                  style={[styles.workspaceCwdChip, {color: onSurfaceColor}]}
+                  numberOfLines={1}>
+                  {shortCwd}
+                </Text>
+              </View>
 
-                {/* Pal Name Display */}
-                {currentActivePal?.name && hasActiveModel && (
-                  <Text
+              {!isVideoCapable && (
+                <View
+                  style={[
+                    styles.modeToggle,
+                    {borderColor: onSurfaceColorVariant},
+                    isModeToggleDisabled && styles.modeToggleDisabled,
+                  ]}
+                  testID="chat-mode-toggle">
+                  <TouchableOpacity
                     style={[
-                      styles.palNameCompact,
-                      {
-                        color: onSurfaceColor,
+                      styles.modeToggleSegment,
+                      !isAgentMode && {
+                        backgroundColor: onSurfaceColor,
                       },
-                    ]}>
-                    Pal:{' '}
+                    ]}
+                    disabled={isModeToggleDisabled}
+                    onPress={() => setChatMode('chat')}
+                    accessibilityLabel="Use Chat mode"
+                    accessibilityRole="button"
+                    accessibilityState={{
+                      selected: !isAgentMode,
+                      disabled: isModeToggleDisabled,
+                    }}
+                    testID="chat-mode-chat">
+                    <Icon
+                      name="message-text-outline"
+                      size={13}
+                      color={
+                        !isAgentMode ? inputBackgroundColor : onSurfaceColor
+                      }
+                    />
                     <Text
                       style={[
-                        styles.palNameValueCompact,
+                        styles.modeToggleText,
                         {
-                          color: onSurfaceColor,
+                          color: !isAgentMode
+                            ? inputBackgroundColor
+                            : onSurfaceColor,
                         },
                       ]}>
-                      {currentActivePal?.name}
+                      Chat
                     </Text>
-                  </Text>
-                )}
-              </View>
+                  </TouchableOpacity>
+                  <TouchableOpacity
+                    style={[
+                      styles.modeToggleSegment,
+                      isAgentMode && {
+                        backgroundColor: onSurfaceColor,
+                      },
+                    ]}
+                    disabled={isModeToggleDisabled}
+                    onPress={() => setChatMode('agent')}
+                    accessibilityLabel="Use Agent mode"
+                    accessibilityRole="button"
+                    accessibilityState={{
+                      selected: isAgentMode,
+                      disabled: isModeToggleDisabled,
+                    }}
+                    testID="chat-mode-agent">
+                    <Icon
+                      name="robot-outline"
+                      size={13}
+                      color={
+                        isAgentMode ? inputBackgroundColor : onSurfaceColor
+                      }
+                    />
+                    <Text
+                      style={[
+                        styles.modeToggleText,
+                        {
+                          color: isAgentMode
+                            ? inputBackgroundColor
+                            : onSurfaceColor,
+                        },
+                      ]}>
+                      Agent
+                    </Text>
+                  </TouchableOpacity>
+                </View>
+              )}
 
               {/* Thinking Toggle Button */}
               {showThinkingToggle && !isCameraActive && (
@@ -591,10 +948,13 @@ export const ChatInput = observer(
                 </View>
               )}
 
-              {/* Voice chip (TTS) — always present so users can stop
-                  audio independently of text generation. Self-gates:
-                  returns null when TTS is unavailable. */}
-              <VoiceChip />
+              {/* In Agent mode the tool controls need the width. Keep the
+                  audio stop affordance visible only while speech is active. */}
+              {shouldShowVoiceChip && (
+                <View style={styles.voiceChipContainer}>
+                  <VoiceChip compact={isAgentMode} />
+                </View>
+              )}
 
               {/* Send/Stop Button */}
               {isStopVisible ? (
@@ -631,6 +991,62 @@ export const ChatInput = observer(
             </View>
           </View>
         </View>
+        <Modal
+          visible={cwdDialogVisible}
+          transparent
+          animationType="fade"
+          onRequestClose={() => setCwdDialogVisible(false)}>
+          <View style={styles.cwdDialogBackdrop}>
+            <View
+              style={[
+                styles.cwdDialog,
+                {backgroundColor: theme.colors.surface},
+              ]}>
+              <Text style={styles.cwdDialogTitle}>Set workspace directory</Text>
+              <TextInput
+                value={cwdDraft}
+                onChangeText={setCwdDraft}
+                autoCapitalize="none"
+                autoCorrect={false}
+                placeholder="/"
+                placeholderTextColor={theme.colors.onSurfaceVariant}
+                style={[
+                  styles.cwdDialogInput,
+                  {
+                    color: theme.colors.onSurface,
+                    borderColor: theme.colors.outlineVariant,
+                  },
+                ]}
+              />
+              <View style={styles.cwdDialogActions}>
+                <TouchableOpacity
+                  onPress={() => setCwdDialogVisible(false)}
+                  style={styles.cwdDialogButton}>
+                  <Text style={{color: theme.colors.onSurfaceVariant}}>
+                    Cancel
+                  </Text>
+                </TouchableOpacity>
+                <TouchableOpacity
+                  onPress={() => {
+                    setCwdDialogVisible(false);
+                    changeWorkspaceCwd(cwdDraft);
+                  }}
+                  style={[
+                    styles.cwdDialogButton,
+                    {backgroundColor: theme.colors.primaryContainer},
+                  ]}>
+                  <Text
+                    style={{
+                      color: theme.colors.onPrimaryContainer,
+                      fontWeight: '700',
+                    }}>
+                    Set
+                  </Text>
+                </TouchableOpacity>
+              </View>
+            </View>
+          </View>
+        </Modal>
       </View>
     );
   },

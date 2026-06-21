@@ -223,6 +223,7 @@ describe('SupertonicEngine (v1.2 real)', () => {
           vocoderPath: expect.stringMatching(/^file:\/\/.*vocoder\.onnx$/),
           voicesPath: expect.stringMatching(/voices-manifest\.json$/),
           executionProviders: ['cpu'],
+          maxChunkSize: 120,
         }),
       );
       expect(Speech.speak).toHaveBeenCalledWith('hello', anyVoice.id, {
@@ -253,14 +254,14 @@ describe('SupertonicEngine (v1.2 real)', () => {
       }
     };
 
-    it('creates a lib stream with targetChars=300 and default language', async () => {
+    it('creates a lib stream with targetChars=120 and default language', async () => {
       new SupertonicEngine().playStreaming(anyVoice);
       await flush();
 
       expect(Speech.createSpeechStream).toHaveBeenCalledTimes(1);
       expect(Speech.createSpeechStream).toHaveBeenCalledWith(
         anyVoice.id,
-        expect.objectContaining({targetChars: 300, language: 'en'}),
+        expect.objectContaining({targetChars: 120, language: 'en'}),
       );
     });
 
@@ -274,7 +275,7 @@ describe('SupertonicEngine (v1.2 real)', () => {
       expect(Speech.createSpeechStream).toHaveBeenCalledWith(
         anyVoice.id,
         expect.objectContaining({
-          targetChars: 300,
+          targetChars: 120,
           language: 'en',
           inferenceSteps: 5,
         }),

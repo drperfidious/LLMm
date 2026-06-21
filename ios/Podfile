@@ -21,6 +21,7 @@ use_frameworks! :linkage => :static
 $RNFirebaseAsStaticFramework = true
 
 ENV['RCT_NEW_ARCH_ENABLED'] = '1'
+ENV['RNLLAMA_BUILD_FROM_SOURCE'] ||= '1'
 
 target 'PocketPal' do
   config = use_native_modules!
@@ -79,6 +80,13 @@ target 'PocketPal' do
       :mac_catalyst_enabled => false,
       # :ccache_enabled => true
     )
+
+    # Xcode 27 rejects pod privacy/resource targets below iOS 15.0.
+    installer.pods_project.targets.each do |target|
+      target.build_configurations.each do |config|
+        config.build_settings['IPHONEOS_DEPLOYMENT_TARGET'] = ios_version
+      end
+    end
 
     # Workaround: pin the fmt pod to C++17 so it skips the consteval code path
     # that Apple clang 21 (Xcode 26.4.1) rejects. Tracking facebook/react-native#55601.

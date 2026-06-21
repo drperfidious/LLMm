@@ -35,6 +35,9 @@ export function getKVCacheTypeBytes(cacheType: string): number {
     q4_1: 0.625, // 20/32
     q5_0: 0.6875, // 22/32
     q5_1: 0.75, // 24/32
+    turbo4: 0.53125, // 68/128
+    turbo3: 0.390625, // 50/128
+    turbo2: 0.265625, // 34/128
   };
   return typeMap[cacheType.toLowerCase()] || 2.0; // Default to f16
 }

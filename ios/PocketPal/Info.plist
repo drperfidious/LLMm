@@ -5,7 +5,7 @@
 	<key>CFBundleDevelopmentRegion</key>
 	<string>en</string>
 	<key>CFBundleDisplayName</key>
-	<string>PocketPal</string>
+	<string>LLMm</string>
 	<key>CFBundleExecutable</key>
 	<string>$(EXECUTABLE_NAME)</string>
 	<key>CFBundleIdentifier</key>
@@ -34,9 +34,10 @@
 			<key>CFBundleTypeRole</key>
 			<string>Editor</string>
 			<key>CFBundleURLName</key>
-			<string>com.pocketpalai.deeplink</string>
+			<string>com.randyduquette.llmm.deeplink</string>
 			<key>CFBundleURLSchemes</key>
 			<array>
+				<string>llmm</string>
 				<string>pocketpal</string>
 			</array>
 		</dict>
@@ -56,12 +57,22 @@
 		<key>NSAllowsLocalNetworking</key>
 		<true/>
 	</dict>
+	<key>NSLocalNetworkUsageDescription</key>
+	<string>LLMm connects to the local Metro development server while running debug builds on your device.</string>
+	<key>NSLocationWhenInUseUsageDescription</key>
+	<string>LLMm may use your location when you enable location-based talents, such as local search or weather, to provide relevant on-device agent responses.</string>
+	<key>NSCalendarsWriteOnlyAccessUsageDescription</key>
+	<string>LLMm can create calendar events only when you explicitly ask an agent to save one.</string>
+	<key>NSCalendarsFullAccessUsageDescription</key>
+	<string>LLMm can search your calendar on-device and create events only when you enable calendar talents and explicitly request them.</string>
+	<key>NSRemindersFullAccessUsageDescription</key>
+	<string>LLMm can search and update reminders on-device only when you enable reminder talents and explicitly request them.</string>
 	<key>NSCameraUsageDescription</key>
-	<string>PocketPal uses your camera to capture images and video for local AI analysis only. All processing happens on your device and no images are transmitted to external servers.</string>
+	<string>LLMm uses your camera to capture images and video for local AI analysis only. All processing happens on your device and no images are transmitted to external servers.</string>
 	<key>NSPhotoLibraryUsageDescription</key>
-	<string>PocketPal accesses your photo library to select images for local AI analysis only. Selected images are processed entirely on your device and are never transmitted to external servers.</string>
+	<string>LLMm accesses your photo library to select images for local AI analysis only. Selected images are processed entirely on your device and are never transmitted to external servers.</string>
 	<key>NSSiriUsageDescription</key>
-	<string>PocketPal uses Siri to let you ask questions to your AI Pals using voice commands.</string>
+	<string>LLMm uses Siri to let you ask questions to your local AI agents using voice commands.</string>
 	<key>RCTNewArchEnabled</key>
 	<true/>
 	<key>UIAppFonts</key>
@@ -84,6 +95,23 @@
 	</array>
 	<key>UILaunchStoryboardName</key>
 	<string>LaunchScreen</string>
+	<key>UIApplicationSceneManifest</key>
+	<dict>
+		<key>UIApplicationSupportsMultipleScenes</key>
+		<false/>
+		<key>UISceneConfigurations</key>
+		<dict>
+			<key>UIWindowSceneSessionRoleApplication</key>
+			<array>
+				<dict>
+					<key>UISceneConfigurationName</key>
+					<string>Default Configuration</string>
+					<key>UISceneDelegateClassName</key>
+					<string>$(PRODUCT_MODULE_NAME).SceneDelegate</string>
+				</dict>
+			</array>
+		</dict>
+	</dict>
 	<key>UIRequiredDeviceCapabilities</key>
 	<array>
 		<string>arm64</string>

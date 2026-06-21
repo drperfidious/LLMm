@@ -32,9 +32,12 @@ jest.mock('../../../hooks', () => ({
 jest.mock('../../../store', () => ({
   chatSessionStore: {
     activePalId: null,
+    chatMode: 'chat',
+    setChatMode: jest.fn(),
   },
   modelStore: {
     activeModel: null,
+    activeModelId: null,
   },
   palStore: {
     pals: [],

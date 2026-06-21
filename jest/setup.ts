@@ -57,6 +57,7 @@ import {deepLinkStore as mockDeepLinkStore} from '../__mocks__/stores/deepLinkSt
 import {mockServerStore} from '../__mocks__/stores/serverStore';
 import {mockTTSStore} from '../__mocks__/stores/ttsStore';
 import {checkoutFlowStore as mockCheckoutFlowStore} from '../__mocks__/stores/checkoutFlowStore';
+import {mockTalentStore} from '../__mocks__/stores/talentStore';
 
 jest.mock('@react-native-clipboard/clipboard', () => mockClipboard);
 
@@ -81,6 +82,21 @@ jest.mock('../src/specs/NativeHardwareInfo', () => ({
     ),
     getChipset: jest.fn(() => Promise.resolve('Mock Chipset')),
     getAvailableMemory: jest.fn(() => Promise.resolve(3 * 1000 * 1000 * 1000)), // 3GB
+    getMetalInfo: jest.fn(() =>
+      Promise.resolve({
+        isSupported: true,
+        name: 'Mock Metal GPU',
+        currentAllocatedSize: 0,
+        recommendedMaxWorkingSetSize: 4 * 1000 * 1000 * 1000,
+        maxBufferLength: 4 * 1000 * 1000 * 1000,
+        maxThreadgroupMemoryLength: 32768,
+        hasUnifiedMemory: true,
+        supportsFamilyApple7: true,
+        supportsFamilyApple8: true,
+        supportsFamilyMetal3: true,
+        highestAppleFamily: 8,
+      }),
+    ),
     writeMemorySnapshot: jest.fn((label: string) =>
       Promise.resolve({label, status: 'written'}),
     ),
@@ -115,6 +131,7 @@ jest.mock('../src/store', () => {
     serverStore: mockServerStore,
     ttsStore: mockTTSStore,
     checkoutFlowStore: mockCheckoutFlowStore,
+    talentStore: mockTalentStore,
     defaultCompletionSettings: mockDefaultCompletionSettings,
   };
 });
@@ -155,8 +172,13 @@ jest.mock('../src/utils/keepAwake', () => ({
   deactivateKeepAwake: jest.fn(),
 }));
 
+const mockShareOpen = jest.fn().mockResolvedValue(undefined);
 jest.mock('react-native-share', () => ({
-  default: jest.fn(),
+  __esModule: true,
+  default: {
+    open: mockShareOpen,
+  },
+  open: mockShareOpen,
 }));
 
 jest.mock('react-native-image-picker');

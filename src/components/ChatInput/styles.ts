@@ -59,10 +59,43 @@ export const createStyles = ({
     thinkingToggleTextDisabled: {
       // Dynamic color will be applied via theme
     },
+    modeToggle: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      height: 28,
+      borderRadius: 14,
+      borderWidth: 1,
+      overflow: 'hidden',
+      marginLeft: 2,
+    },
+    modeToggleDisabled: {
+      opacity: 0.5,
+    },
+    modeToggleSegment: {
+      height: 26,
+      minWidth: 66,
+      flexDirection: 'row',
+      alignItems: 'center',
+      justifyContent: 'center',
+      gap: 4,
+      paddingHorizontal: 8,
+    },
+    modeToggleText: {
+      fontSize: 11,
+      lineHeight: 14,
+      fontWeight: '600',
+    },
     palSelector: {
       flexDirection: 'row',
       alignItems: 'center',
       gap: 4,
+      maxWidth: 112,
+    },
+    workspaceCwdChip: {
+      fontSize: 10,
+      lineHeight: 13,
+      ...fontStyles.semibold,
+      maxWidth: 78,
     },
     inputWrapper: {
       flexDirection: 'row',
@@ -110,6 +143,9 @@ export const createStyles = ({
       position: 'relative',
       flexDirection: 'row',
       alignItems: 'center',
+    },
+    voiceChipContainer: {
+      marginLeft: 6,
     },
     editBar: {
       position: 'absolute',
@@ -272,5 +308,52 @@ export const createStyles = ({
       color: theme.colors.onErrorContainer,
       fontSize: 11,
       lineHeight: 14,
+    },
+    cwdDialogBackdrop: {
+      flex: 1,
+      justifyContent: 'center',
+      paddingHorizontal: 24,
+      backgroundColor: 'rgba(0, 0, 0, 0.45)',
+    },
+    cwdDialog: {
+      borderRadius: 12,
+      padding: 16,
+      shadowColor: '#000',
+      shadowOffset: {
+        width: 0,
+        height: 4,
+      },
+      shadowOpacity: 0.2,
+      shadowRadius: 8,
+      elevation: 8,
+    },
+    cwdDialogTitle: {
+      fontSize: 16,
+      lineHeight: 20,
+      fontWeight: '700',
+      color: theme.colors.onSurface,
+      marginBottom: 12,
+    },
+    cwdDialogInput: {
+      minHeight: 44,
+      borderWidth: 1,
+      borderRadius: 8,
+      paddingHorizontal: 12,
+      paddingVertical: 8,
+      fontSize: 14,
+    },
+    cwdDialogActions: {
+      flexDirection: 'row',
+      justifyContent: 'flex-end',
+      gap: 8,
+      marginTop: 14,
+    },
+    cwdDialogButton: {
+      minHeight: 36,
+      minWidth: 72,
+      paddingHorizontal: 12,
+      borderRadius: 18,
+      alignItems: 'center',
+      justifyContent: 'center',
     },
   });

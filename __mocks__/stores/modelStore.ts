@@ -5,6 +5,7 @@ import {modelsList} from '../../jest/fixtures/models';
 import {downloadManager} from '../services/downloads';
 
 import {Model, ContextInitParams} from '../../src/utils/types';
+import type {ModelInitProfile} from '../../src/store/ModelStore';
 import {LlamaContext} from 'llama.rn';
 import {CompletionEngine} from '../../src/utils/completionTypes';
 import {createDefaultContextInitParams} from '../../src/utils/contextInitParamsVersions';
@@ -12,9 +13,14 @@ import {createDefaultContextInitParams} from '../../src/utils/contextInitParamsV
 class MockModelStore {
   models = modelsList;
   contextInitParams: ContextInitParams = createDefaultContextInitParams();
+  requestedContextSize: number | undefined = undefined;
   max_threads = 4;
   MIN_CONTEXT_SIZE = 200;
   useAutoRelease = true;
+  allowUnsafeContextLimits = false;
+  modelInitProfiles: Record<string, ModelInitProfile> = {};
+  modelInitProfileRevision = 0;
+  downloadRevision = 0;
   activeModelId: string | undefined;
   inferencing = false;
   isStreaming = false;
@@ -29,6 +35,7 @@ class MockModelStore {
   addLocalModel: jest.Mock;
   removeModelByFullPath: jest.Mock;
   setNContext: jest.Mock;
+  setAllowUnsafeContextLimits: jest.Mock;
   updateUseAutoRelease: jest.Mock;
   setNoGpuDevices: jest.Mock;
   setDevices: jest.Mock;
@@ -65,6 +72,9 @@ class MockModelStore {
   setCacheTypeV: jest.Mock;
   setUseMmap: jest.Mock;
   setNoExtraBufts: jest.Mock;
+  getModelInitProfileDraft: jest.Mock;
+  saveModelInitProfileSettings: jest.Mock;
+  clearModelInitProfile: jest.Mock;
   enterBenchmarkMode: jest.Mock;
   exitBenchmarkMode: jest.Mock;
   benchmarkActive: boolean = false;
@@ -78,6 +88,7 @@ class MockModelStore {
       addLocalModel: false,
       removeModelByFullPath: false,
       setNContext: false,
+      setAllowUnsafeContextLimits: false,
       updateUseAutoRelease: false,
 
       setNGPULayers: false,
@@ -111,6 +122,9 @@ class MockModelStore {
       setCacheTypeV: false,
       setUseMmap: false,
       setNoExtraBufts: false,
+      getModelInitProfileDraft: false,
+      saveModelInitProfileSettings: false,
+      clearModelInitProfile: false,
       enterBenchmarkMode: false,
       exitBenchmarkMode: false,
       contextId: computed,
@@ -123,7 +137,38 @@ class MockModelStore {
     this.refreshDownloadStatuses = jest.fn();
     this.addLocalModel = jest.fn();
     this.removeModelByFullPath = jest.fn();
-    this.setNContext = jest.fn();
+    this.setNContext = jest.fn(
+      (
+        n_ctx: number,
+        options: {allowUnsafeContextLimits?: boolean; model?: Model} = {},
+      ) => {
+        const limitInfo = this.getContextLimitInfo(n_ctx, options.model, {
+          allowUnsafeContextLimits: options.allowUnsafeContextLimits,
+        });
+        this.requestedContextSize = limitInfo.requested;
+        this.contextInitParams = {
+          ...this.contextInitParams,
+          n_ctx: limitInfo.effective,
+        };
+      },
+    );
+    this.setAllowUnsafeContextLimits = jest.fn((value: boolean) => {
+      const requestedContext =
+        this.requestedContextSize ?? this.contextInitParams.n_ctx;
+      this.allowUnsafeContextLimits = value;
+      this.requestedContextSize = requestedContext;
+      const limitInfo = this.getContextLimitInfo(
+        value ? requestedContext : this.contextInitParams.n_ctx,
+        undefined,
+        {allowUnsafeContextLimits: value},
+      );
+      if (limitInfo.effective !== this.contextInitParams.n_ctx) {
+        this.contextInitParams = {
+          ...this.contextInitParams,
+          n_ctx: limitInfo.effective,
+        };
+      }
+    });
     this.updateUseAutoRelease = jest.fn();
     this.setNoGpuDevices = jest.fn();
     this.setDevices = jest.fn();
@@ -163,6 +208,74 @@ class MockModelStore {
     this.setCacheTypeV = jest.fn();
     this.setUseMmap = jest.fn();
     this.setNoExtraBufts = jest.fn();
+    this.getModelInitProfileDraft = jest.fn((modelId: string) => {
+      const profile = this.modelInitProfiles[modelId];
+      const settings = profile?.settings ?? this.contextInitParams;
+      const allowUnsafeContextLimits =
+        profile?.allowUnsafeContextLimits ?? this.allowUnsafeContextLimits;
+      const requestedContextSize =
+        profile?.requestedContextSize ??
+        this.requestedContextSize ??
+        settings.n_ctx;
+      const model = this.models.find(m => m.id === modelId);
+      const limitInfo = this.getContextLimitInfo(requestedContextSize, model, {
+        allowUnsafeContextLimits,
+      });
+
+      return {
+        version: 1,
+        settings: {
+          ...JSON.parse(JSON.stringify(settings)),
+          n_ctx: limitInfo.effective,
+        },
+        allowUnsafeContextLimits,
+        requestedContextSize: limitInfo.requested,
+        updatedAt: profile?.updatedAt ?? new Date(0).toISOString(),
+        source: profile?.source ?? 'manual',
+        modelId,
+      };
+    });
+    this.saveModelInitProfileSettings = jest.fn(
+      (
+        modelId: string,
+        settings: ContextInitParams,
+        allowUnsafe: boolean,
+        _source = 'manual',
+        requestedContextSize: number | undefined = settings.n_ctx,
+      ) => {
+        const model = this.models.find(m => m.id === modelId);
+        const limitInfo = this.getContextLimitInfo(
+          requestedContextSize ?? settings.n_ctx,
+          model,
+          {allowUnsafeContextLimits: allowUnsafe},
+        );
+        const normalizedSettings = {
+          ...settings,
+          n_ctx: limitInfo.effective,
+        };
+        this.modelInitProfiles = {
+          ...this.modelInitProfiles,
+          [modelId]: {
+            version: 1,
+            settings: normalizedSettings,
+            allowUnsafeContextLimits: allowUnsafe,
+            requestedContextSize: limitInfo.requested,
+            updatedAt: new Date().toISOString(),
+            source: 'manual',
+          },
+        };
+        if (this.activeModelId === modelId) {
+          this.contextInitParams = normalizedSettings;
+          this.requestedContextSize = limitInfo.requested;
+          this.allowUnsafeContextLimits = allowUnsafe;
+        }
+        return true;
+      },
+    );
+    this.clearModelInitProfile = jest.fn((modelId: string) => {
+      const {[modelId]: _removed, ...remaining} = this.modelInitProfiles;
+      this.modelInitProfiles = remaining;
+    });
     this.enterBenchmarkMode = jest.fn().mockResolvedValue(undefined);
     this.exitBenchmarkMode = jest.fn();
   }
@@ -198,7 +311,10 @@ class MockModelStore {
 
   get isDownloading() {
     return (modelId: string) => {
-      return downloadManager.isDownloading(modelId);
+      const model = this.models.find(m => m.id === modelId);
+      return Boolean(
+        model?.isDownloading || downloadManager.isDownloading(modelId),
+      );
     };
   }
 
@@ -236,6 +352,43 @@ class MockModelStore {
     // Tests can spy on this if they need to assert what got passed to
     // initLlama.
     return JSON.parse(JSON.stringify(this.contextInitParams));
+  }
+
+  getContextLimitInfo(
+    requestedContext: number,
+    model?: Model,
+    options: {allowUnsafeContextLimits?: boolean} = {},
+  ) {
+    const selectedModel = model ?? this.activeModel ?? this.lastUsedModel;
+    const allowUnsafeContextLimits =
+      options.allowUnsafeContextLimits ?? this.allowUnsafeContextLimits;
+    const requested =
+      Number.isFinite(requestedContext) && requestedContext > 0
+        ? Math.floor(requestedContext)
+        : this.contextInitParams.n_ctx;
+    const metadataLimit = Number(selectedModel?.ggufMetadata?.context_length);
+    const normalizedMetadataLimit =
+      Number.isFinite(metadataLimit) && metadataLimit > 0
+        ? Math.floor(metadataLimit)
+        : undefined;
+    const boundaryModel =
+      !!selectedModel &&
+      ((selectedModel.params ?? 0) >= 6_000_000_000 ||
+        (selectedModel.size ?? 0) >= 2_000_000_000);
+    const effective = requested;
+
+    return {
+      requested,
+      effective,
+      metadataLimit: normalizedMetadataLimit,
+      deviceLimit: undefined,
+      limit: undefined,
+      boundaryModel,
+      unsafeLimitsEnabled: allowUnsafeContextLimits,
+      metadataConstrained: false,
+      deviceConstrained: false,
+      isConstrained: false,
+    };
   }
 
   getCompatibleProjectionModels = jest.fn().mockReturnValue([]);

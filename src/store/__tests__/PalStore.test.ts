@@ -32,6 +32,7 @@ jest.mock('../../utils/imageUtils', () => ({
 
 jest.mock('../../services', () => ({
   palsHubService: {
+    isConfigured: jest.fn(),
     getPals: jest.fn(),
     getPal: jest.fn(),
     getLibrary: jest.fn(),
@@ -96,6 +97,7 @@ describe('PalStore', () => {
     });
 
     // Setup default mocks
+    (palsHubService.isConfigured as jest.Mock).mockReturnValue(true);
     (palRepository.getAllPals as jest.Mock).mockResolvedValue([]);
     (palRepository.checkAndMigrateFromJSON as jest.Mock).mockResolvedValue(
       undefined,

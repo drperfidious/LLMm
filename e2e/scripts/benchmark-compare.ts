@@ -33,6 +33,8 @@ export interface BenchmarkRunReport {
     | 'cpu'
     | 'opencl'
     | 'cpu+opencl-partial'
+    | 'metal'
+    | 'cpu+metal-partial'
     | 'hexagon'
     | 'cpu+hexagon-partial'
     | 'unknown';
@@ -150,9 +152,7 @@ export function compareReports(
   // captured at nr:1 before the CLI/spec unified on nr:3) keep loading.
   const baseB = baseline.bench;
   const curB = current.bench;
-  let benchMismatch:
-    | {baseline: BenchParams; current: BenchParams}
-    | undefined;
+  let benchMismatch: {baseline: BenchParams; current: BenchParams} | undefined;
   if (baseB && curB) {
     if (
       baseB.pp !== curB.pp ||
@@ -163,7 +163,8 @@ export function compareReports(
       benchMismatch = {baseline: baseB, current: curB};
     }
   } else {
-    const missingFrom = !baseB && !curB ? 'both' : !baseB ? 'baseline' : 'current';
+    const missingFrom =
+      !baseB && !curB ? 'both' : !baseB ? 'baseline' : 'current';
     // eslint-disable-next-line no-console
     console.error(
       `WARN: ${missingFrom} report missing \`bench\` params; protocol comparison disabled.`,
@@ -321,8 +322,7 @@ function main(): void {
 
   const result = compareReports(baseline, current, {pct});
 
-  const savePath =
-    outputPath || curPath.replace(/\.json$/, '-comparison.json');
+  const savePath = outputPath || curPath.replace(/\.json$/, '-comparison.json');
   fs.writeFileSync(savePath, JSON.stringify(result, null, 2));
 
   console.error(
@@ -330,10 +330,10 @@ function main(): void {
   );
   console.error(`Threshold: |delta%| > ${result.threshold_pct}% on pp OR tg\n`);
 
-  // Hexagon's `requested_backend` ('hexagon') and `effective_backend`
-  // arms ('hexagon', 'cpu+hexagon-partial') are wider than the OpenCL
-  // ones, so widen `req` and `eff` columns. Fingerprint column added
-  // between `quant` and `req` (WHAT 4g.1, Step 10 surface).
+  // Hexagon/Metal partial `effective_backend` arms are wider than the
+  // OpenCL full-offload label, so keep `req` and `eff` columns wide.
+  // Fingerprint column added between `quant` and `req` (WHAT 4g.1,
+  // Step 10 surface).
   const header =
     `${'model'.padEnd(14)} ${'quant'.padEnd(8)} ${'fp'.padEnd(20)} ${'req'.padEnd(7)} ` +
     `${'base_pp'.padStart(8)} ${'cur_pp'.padStart(8)} ${'d_pp%'.padStart(8)} ` +

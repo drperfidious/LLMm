@@ -17,6 +17,11 @@ import {createStyles} from './styles';
 import {modelStore} from '../../store';
 
 import {L10nContext} from '../../utils';
+import {
+  openReportEmailDraft,
+  REPORT_RECIPIENT_EMAIL,
+  ReportEmailResult,
+} from '../../utils/reportEmail';
 
 import {TextInput} from '..';
 
@@ -68,6 +73,30 @@ export const ContentReportSheet: React.FC<ContentReportSheetProps> = ({
     onClose();
   };
 
+  const showEmailFallbackAlert = (
+    result: ReportEmailResult,
+    onPress?: () => void,
+  ) => {
+    if (result.openedMailApp) {
+      Alert.alert(
+        'Email draft opened',
+        `Server reporting failed, so a prefilled email to ${REPORT_RECIPIENT_EMAIL} was opened. Send it to forward the report.${
+          result.copiedBodyToClipboard
+            ? ' The full report was copied to your clipboard because it was too large for the email link.'
+            : ''
+        }`,
+        [{text: l10n.common.ok, onPress}],
+      );
+      return;
+    }
+
+    Alert.alert(
+      'Report copied',
+      `Server reporting failed and no email app opened. The full report was copied to your clipboard; paste it into an email to ${REPORT_RECIPIENT_EMAIL}.`,
+      [{text: l10n.common.ok, onPress}],
+    );
+  };
+
   const handleSubmit = async () => {
     if (!selectedCategory || !description.trim()) {
       Alert.alert(
@@ -79,16 +108,17 @@ export const ContentReportSheet: React.FC<ContentReportSheetProps> = ({
     }
 
     setIsSubmitting(true);
+    const reportPayload = {
+      category: selectedCategory,
+      description: description.trim(),
+      includeModelInfo,
+      modelId: includeModelInfo ? activeModel?.id : undefined,
+      modelOid: includeModelInfo ? activeModel?.hfModelFile?.oid : undefined,
+      isContentReport: true as const,
+    };
 
     try {
-      await submitContentReport({
-        category: selectedCategory,
-        description: description.trim(),
-        includeModelInfo,
-        modelId: includeModelInfo ? activeModel?.id : undefined,
-        modelOid: includeModelInfo ? activeModel?.hfModelFile?.oid : undefined,
-        isContentReport: true,
-      });
+      await submitContentReport(reportPayload);
 
       Alert.alert(
         l10n.components.contentReportSheet.success.title,
@@ -97,11 +127,13 @@ export const ContentReportSheet: React.FC<ContentReportSheetProps> = ({
       );
     } catch (error) {
       console.error('Content report submission error:', error);
-      Alert.alert(
-        l10n.components.contentReportSheet.error.title,
-        l10n.components.contentReportSheet.error.message,
-        [{text: l10n.common.ok}],
-      );
+      const emailResult = await openReportEmailDraft({
+        reportType: 'content-report',
+        subject: `LLMm content report: ${selectedCategory}`,
+        payload: reportPayload,
+        submissionError: error,
+      });
+      showEmailFallbackAlert(emailResult, handleClose);
     } finally {
       setIsSubmitting(false);
     }

@@ -1,6 +1,7 @@
 import {makeAutoObservable, runInAction} from 'mobx';
 import {format, isToday, isYesterday} from 'date-fns';
 import * as RNFS from '@dr.pogodin/react-native-fs';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 
 import {
   AgentStep,
@@ -19,6 +20,8 @@ import {derivedText} from '../utils/chat';
 import {palStore} from './PalStore';
 import {deriveToolSchemas} from '../services/talents';
 import {AgentUiState, initialAgentUiState} from '../services/agent';
+import {talentStore} from './TalentStore';
+import {workspaceSessionState} from '../services/workspace';
 
 /**
  * Update payload accepted by `updateMessage` / `updateMessageStreaming`.
@@ -32,9 +35,15 @@ type MessageUpdate =
 
 const NEW_SESSION_TITLE = 'New Session';
 const TITLE_LIMIT = 40;
+const CHAT_MODE_STORAGE_KEY = 'llmm:chat-mode';
+const WORKSPACE_CWD_STORAGE_KEY = 'llmm:workspace-cwd';
 
-// Coalesce per-token writes into batched UI flushes (~33 Hz).
-const STREAMING_THROTTLE_MS = 30;
+// Coalesce per-token writes into batched UI flushes. Keeping this below frame
+// rate matters on iOS: Metal inference can already saturate the process.
+const STREAMING_THROTTLE_MS = 80;
+// Streaming should feel live, but SQLite does not need every partial token.
+// Final turn writes still persist the complete content.
+const STREAMING_PERSIST_THROTTLE_MS = 2000;
 
 export interface SessionMetaData {
   id: string;
@@ -68,6 +77,8 @@ export const defaultCompletionSettings = {...defaultCompletionParams};
 delete defaultCompletionSettings.prompt;
 delete defaultCompletionSettings.stop;
 
+export type ChatMode = 'chat' | 'agent';
+
 class ChatSessionStore {
   sessions: SessionMetaData[] = [];
   activeSessionId: string | null = null;
@@ -91,6 +102,8 @@ class ChatSessionStore {
   newChatCompletionSettings: CompletionParams = defaultCompletionSettings;
   newChatPalId: string | undefined = undefined;
   newChatSettingsSource: 'pal' | 'custom' = 'pal';
+  chatMode: ChatMode = 'chat';
+  workspaceCwd = '/';
   // User's manual thinking toggle in the no-session chat path. When set,
   // the resolver applies it as the last layer (after pal) so the toggle
   // persists; cleared on session creation, new-chat reset, and session
@@ -162,6 +175,8 @@ class ChatSessionStore {
       // Load data from database (whether migration happened or not)
       await this.loadSessionList();
       await this.loadGlobalSettings();
+      await this.loadChatMode();
+      await this.loadWorkspaceCwd();
     } catch (error) {
       console.error('Failed to initialize ChatSessionStore:', error);
       runInAction(() => {
@@ -205,6 +220,51 @@ class ChatSessionStore {
 
   setIsStopping(value: boolean) {
     this.isStopping = value;
+  }
+
+  setChatMode(value: ChatMode) {
+    this.chatMode = value;
+    AsyncStorage?.setItem?.(CHAT_MODE_STORAGE_KEY, value).catch(error => {
+      console.error('Failed to persist chat mode:', error);
+    });
+  }
+
+  async loadChatMode(): Promise<void> {
+    try {
+      const stored = await AsyncStorage?.getItem?.(CHAT_MODE_STORAGE_KEY);
+      if (stored === 'chat' || stored === 'agent') {
+        runInAction(() => {
+          this.chatMode = stored;
+        });
+      }
+    } catch (error) {
+      console.error('Failed to load chat mode:', error);
+    }
+  }
+
+  setWorkspaceCwd(value: string) {
+    const next = workspaceSessionState.setCwd(value);
+    this.workspaceCwd = next;
+    AsyncStorage?.setItem?.(WORKSPACE_CWD_STORAGE_KEY, next).catch(error => {
+      console.error('Failed to persist workspace cwd:', error);
+    });
+    return next;
+  }
+
+  async loadWorkspaceCwd(): Promise<void> {
+    try {
+      const stored = await AsyncStorage?.getItem?.(WORKSPACE_CWD_STORAGE_KEY);
+      if (stored) {
+        runInAction(() => {
+          this.workspaceCwd = workspaceSessionState.setCwd(stored);
+        });
+      } else {
+        workspaceSessionState.setCwd(this.workspaceCwd);
+      }
+    } catch (error) {
+      console.error('Failed to load workspace cwd:', error);
+      workspaceSessionState.setCwd(this.workspaceCwd);
+    }
   }
 
   /**
@@ -633,6 +693,7 @@ class ChatSessionStore {
       }
     | null = null;
   private lastStreamingUpdateTime: number = 0;
+  private lastStreamingPersistTime: number = 0;
 
   /**
    * Schedule a throttled update through the shared throttle slot. The
@@ -671,7 +732,7 @@ class ChatSessionStore {
    * pushed step that happens to be `lastIdx` when the timer fires.
    *
    * Without this, the regression sequence is: final `token` for step 0
-   * schedules the throttle (fires in 150ms) → step_finished + tool_call
+   * schedules the throttle → step_finished + tool_call
    * events run synchronously → step_started(1) pushes step 1 → throttle
    * timer fires → applies step 0's pending content to step 1, briefly
    * showing step 0's text duplicated under the talent block until the
@@ -686,6 +747,24 @@ class ChatSessionStore {
       this.applyStreamingUpdate();
       this.lastStreamingUpdateTime = Date.now();
     }
+  }
+
+  private shouldPersistStreamingCheckpoint(force = false): boolean {
+    if (force) {
+      this.lastStreamingPersistTime = Date.now();
+      return true;
+    }
+
+    const now = Date.now();
+    if (
+      this.lastStreamingPersistTime === 0 ||
+      now - this.lastStreamingPersistTime >= STREAMING_PERSIST_THROTTLE_MS
+    ) {
+      this.lastStreamingPersistTime = now;
+      return true;
+    }
+
+    return false;
   }
 
   // Update message during streaming - no database write, triggers reactivity
@@ -764,11 +843,13 @@ class ChatSessionStore {
           };
         }
       });
-      chatSessionRepository
-        .updateMessage(pending.id, update)
-        .catch(error =>
-          console.error('Failed to persist streaming update to DB:', error),
-        );
+      if (this.shouldPersistStreamingCheckpoint(update.metadata !== undefined)) {
+        chatSessionRepository
+          .updateMessage(pending.id, update)
+          .catch(error =>
+            console.error('Failed to persist streaming update to DB:', error),
+          );
+      }
       return;
     }
 
@@ -791,11 +872,13 @@ class ChatSessionStore {
         ...partial,
       };
     });
-    chatSessionRepository
-      .updateMessage(pending.id, {steps: turn.steps})
-      .catch(error =>
-        console.error('Failed to persist streaming step update to DB:', error),
-      );
+    if (this.shouldPersistStreamingCheckpoint()) {
+      chatSessionRepository
+        .updateMessage(pending.id, {steps: turn.steps})
+        .catch(error =>
+          console.error('Failed to persist streaming step update to DB:', error),
+        );
+    }
   }
 
   async updateMessage(
@@ -1464,7 +1547,13 @@ class ChatSessionStore {
       // Inject tool schemas from pact.talents (PACT → completionSettings.tools)
       const talentNames = pal?.pact?.talents?.map(t => t.name);
       if (talentNames && talentNames.length > 0) {
-        const tools = deriveToolSchemas(talentNames);
+        const enabledTalentNames = talentNames.filter(name =>
+          talentStore.isTalentEnabled(name),
+        );
+        const tools = [
+          ...deriveToolSchemas(enabledTalentNames),
+          ...talentStore.deriveCustomToolSchemas(enabledTalentNames),
+        ];
         if (tools.length > 0) {
           resolvedSettings = {
             ...resolvedSettings,

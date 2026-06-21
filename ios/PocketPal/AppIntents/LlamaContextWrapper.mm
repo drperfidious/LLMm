@@ -7,11 +7,12 @@
 
 #import "LlamaContextWrapper.h"
 
-// Import the C++ headers from the rnllama framework
-#include <rnllama/rn-llama.h>
-#include <rnllama/rn-completion.h>
-#include <rnllama/chat.h>
-#include <rnllama/common.h>
+// Import llama.rn source headers. The app builds llama.rn from source on iOS
+// so the prebuilt rnllama.framework header namespace is not always present.
+#include "rn-llama.h"
+#include "rn-completion.h"
+#include "chat.h"
+#include "common.h"
 
 #include <string>
 #include <vector>

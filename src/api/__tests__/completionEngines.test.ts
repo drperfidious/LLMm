@@ -73,6 +73,10 @@ describe('LocalCompletionEngine', () => {
     const onToken = jest.fn();
     await engine.completion({} as any, onToken);
 
+    expect(mockContext.completion).toHaveBeenCalledWith(
+      {partial_callback_interval_ms: 80},
+      expect.any(Function),
+    );
     expect(onToken).toHaveBeenCalledWith({
       token: 'tok',
       content: 'tok',
@@ -91,6 +95,21 @@ describe('LocalCompletionEngine', () => {
     expect(mockContext.completion).toHaveBeenCalledWith(
       expect.anything(),
       undefined,
+    );
+  });
+
+  it('throws when a local model returns an empty zero-token completion', async () => {
+    (mockContext.completion as jest.Mock).mockResolvedValueOnce({
+      text: '',
+      content: '',
+      reasoning_content: '',
+      tokens_predicted: 0,
+      stopped_eos: true,
+      context_full: false,
+    });
+
+    await expect(engine.completion({} as any)).rejects.toThrow(
+      /empty completion/i,
     );
   });
 

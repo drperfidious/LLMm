@@ -10,7 +10,7 @@ export type Mode = 'light' | 'dark';
 /**
  * Color tokens — every key has a light and dark binding (encoded in the
  * `lightColors` / `darkColors` exports). Names mirror MD3 conventions for
- * the migration layer; semantic / PocketPal-specific extras are appended.
+ * the migration layer; semantic / LLMm-specific extras are appended.
  */
 export interface TokenColors {
   // MD3 base palette
