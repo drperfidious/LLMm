@@ -7,6 +7,7 @@ import {
   normalizeWorkspacePath,
   resolveWorkspacePath,
 } from './pathUtils';
+import {pathWithInferredTextExtension} from './documentUtils';
 
 const DEFAULT_MAX_READ_BYTES = 96 * 1024;
 const DEFAULT_MAX_WRITE_BYTES = 512 * 1024;
@@ -256,7 +257,10 @@ export class WorkspaceFileSystem {
   ): Promise<WorkspaceReadResult> {
     const cwd = options.cwd ?? '';
     const maxBytes = options.maxBytes ?? DEFAULT_MAX_WRITE_BYTES;
-    const {relativePath, absolutePath} = this.resolve(path, cwd);
+    const targetPath = options.append
+      ? path
+      : pathWithInferredTextExtension(path, content);
+    const {relativePath, absolutePath} = this.resolve(targetPath, cwd);
     if (!relativePath) {
       throw new Error('Cannot write workspace root as a file');
     }

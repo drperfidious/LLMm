@@ -1,11 +1,16 @@
 import React from 'react';
 import * as RNFS from '@dr.pogodin/react-native-fs';
+import Clipboard from '@react-native-clipboard/clipboard';
 
 import {fireEvent, render, waitFor} from '../../../../jest/test-utils';
 import {chatSessionStore} from '../../../store';
 import {DocumentsScreen} from '../DocumentsScreen';
 
 const mockNavigate = jest.fn();
+
+jest.mock('@react-native-clipboard/clipboard', () => ({
+  setString: jest.fn(),
+}));
 
 jest.mock('@react-navigation/native', () => {
   const actual = jest.requireActual('@react-navigation/native');
@@ -66,6 +71,30 @@ describe('DocumentsScreen', () => {
         }),
       );
       expect(mockNavigate).toHaveBeenCalledWith('Chat');
+    });
+  });
+
+  it('copies preview text from the document reader', async () => {
+    const {getByTestId, getByText} = render(<DocumentsScreen />);
+
+    await waitFor(() => {
+      expect(getByTestId('documents-row-/note.md')).toBeTruthy();
+    });
+
+    fireEvent.press(getByTestId('documents-row-/note.md'));
+
+    await waitFor(() => {
+      expect(RNFS.readFile).toHaveBeenCalledWith(
+        '/path/to/documents/llmm-workspace/note.md',
+        'utf8',
+      );
+    });
+    fireEvent.press(getByTestId('documents-copy'));
+
+    await waitFor(() => {
+      expect(Clipboard.setString).toHaveBeenCalledWith(
+        '# Hello\n\nWorkspace note.',
+      );
     });
   });
 });

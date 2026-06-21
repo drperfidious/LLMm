@@ -9,6 +9,7 @@ import {
   ActivityIndicator,
   Alert,
   FlatList,
+  Modal,
   Platform,
   ScrollView,
   TouchableOpacity,
@@ -16,6 +17,7 @@ import {
   useWindowDimensions,
 } from 'react-native';
 
+import Clipboard from '@react-native-clipboard/clipboard';
 import {
   errorCodes,
   isErrorWithCode,
@@ -165,6 +167,15 @@ export const DocumentsScreen: React.FC = observer(() => {
     });
     return sorted;
   }, [entries, query, sortMode]);
+  const selectedEntry = useMemo(
+    () => entries.find(entry => entry.path === selectedPath) ?? null,
+    [entries, selectedPath],
+  );
+
+  const closePreview = useCallback(() => {
+    setSelectedPath(null);
+    setPreview({status: 'idle'});
+  }, []);
 
   const loadPreview = useCallback(
     async (entry: WorkspaceEntry) => {
@@ -340,6 +351,30 @@ export const DocumentsScreen: React.FC = observer(() => {
     [copy.binaryCloneBlocked, copy.cloneFailed, copy.cloned, navigation],
   );
 
+  const handleCopy = useCallback(
+    async (entry: WorkspaceEntry) => {
+      setStatusMessage('');
+      if (!isTextLikeWorkspacePath(entry.path)) {
+        setStatusMessage(copy.binaryCloneBlocked);
+        return;
+      }
+      try {
+        const content =
+          preview.status === 'ready' && preview.path === entry.path
+            ? preview.content
+            : (await workspaceFileSystem.readFile(entry.path, '', 256 * 1024))
+                .content;
+        Clipboard.setString(content);
+        setStatusMessage(copy.copied);
+      } catch (error) {
+        setStatusMessage(
+          error instanceof Error ? error.message : copy.copyFailed,
+        );
+      }
+    },
+    [copy.binaryCloneBlocked, copy.copied, copy.copyFailed, preview],
+  );
+
   const handleShare = useCallback(
     async (entry: WorkspaceEntry) => {
       try {
@@ -380,17 +415,23 @@ export const DocumentsScreen: React.FC = observer(() => {
 
     if (preview.language === 'markdown') {
       return (
-        <View style={styles.markdownPreview}>
+        <ScrollView
+          nestedScrollEnabled
+          style={styles.previewScroll}
+          contentContainerStyle={styles.markdownPreviewContent}>
           <MarkdownView
             markdownText={preview.content}
-            maxMessageWidth={Math.max(240, width - 48)}
+            maxMessageWidth={Math.max(240, width - 64)}
           />
-        </View>
+        </ScrollView>
       );
     }
 
     return (
-      <ScrollView nestedScrollEnabled style={styles.rawPreview}>
+      <ScrollView
+        nestedScrollEnabled
+        style={styles.previewScroll}
+        contentContainerStyle={styles.rawPreviewContent}>
         <Text selectable style={styles.rawPreviewText}>
           {preview.content}
         </Text>
@@ -423,39 +464,6 @@ export const DocumentsScreen: React.FC = observer(() => {
             </Text>
           </View>
         </View>
-        {selected ? (
-          <View style={styles.expanded}>
-            {renderPreview(item)}
-            <View style={styles.actionRow}>
-              <Button
-                compact
-                mode="contained"
-                onPress={() => handleClone(item)}
-                style={styles.actionButton}>
-                {copy.clone}
-              </Button>
-              <Button
-                compact
-                mode="outlined"
-                onPress={() => handleShare(item)}
-                icon={({color}) => (
-                  <ShareIcon width={16} height={16} stroke={color} />
-                )}>
-                {copy.share}
-              </Button>
-              <Button
-                compact
-                mode="text"
-                textColor={theme.colors.error}
-                onPress={() => handleDelete(item)}
-                icon={({color}) => (
-                  <TrashIcon width={16} height={16} stroke={color} />
-                )}>
-                {l10n.common.delete}
-              </Button>
-            </View>
-          </View>
-        ) : null}
       </TouchableOpacity>
     );
   };
@@ -610,6 +618,90 @@ export const DocumentsScreen: React.FC = observer(() => {
           </View>
         }
       />
+      <Modal
+        visible={!!selectedEntry}
+        animationType="slide"
+        presentationStyle="pageSheet"
+        onRequestClose={closePreview}>
+        <View style={styles.reader}>
+          {selectedEntry ? (
+            <>
+              <View style={styles.readerHeader}>
+                <View style={styles.readerTitleWrap}>
+                  <Text
+                    variant="titleMedium"
+                    style={styles.readerTitle}
+                    numberOfLines={1}>
+                    {selectedEntry.name}
+                  </Text>
+                  <Text
+                    variant="bodySmall"
+                    style={styles.readerMeta}
+                    numberOfLines={1}>
+                    {selectedEntry.path} · {formatBytes(selectedEntry.size)}
+                    {selectedEntry.modifiedAt
+                      ? ` · ${modifiedLabel(selectedEntry.modifiedAt)}`
+                      : ''}
+                  </Text>
+                </View>
+                <TouchableOpacity
+                  accessibilityRole="button"
+                  accessibilityLabel={l10n.common.close}
+                  onPress={closePreview}
+                  style={styles.closeButton}>
+                  <CloseIcon
+                    width={20}
+                    height={20}
+                    stroke={theme.colors.onSurfaceVariant}
+                  />
+                </TouchableOpacity>
+              </View>
+              <View style={styles.readerBody}>
+                {renderPreview(selectedEntry)}
+              </View>
+              <View style={styles.readerActions}>
+                <Button
+                  compact
+                  mode="contained"
+                  onPress={() => handleClone(selectedEntry)}
+                  style={styles.actionButton}>
+                  {copy.clone}
+                </Button>
+                <Button
+                  testID="documents-copy"
+                  compact
+                  mode="outlined"
+                  onPress={() => handleCopy(selectedEntry)}
+                  disabled={
+                    preview.status !== 'ready' ||
+                    preview.path !== selectedEntry.path
+                  }>
+                  {copy.copy}
+                </Button>
+                <Button
+                  compact
+                  mode="outlined"
+                  onPress={() => handleShare(selectedEntry)}
+                  icon={({color}) => (
+                    <ShareIcon width={16} height={16} stroke={color} />
+                  )}>
+                  {copy.share}
+                </Button>
+                <Button
+                  compact
+                  mode="text"
+                  textColor={theme.colors.error}
+                  onPress={() => handleDelete(selectedEntry)}
+                  icon={({color}) => (
+                    <TrashIcon width={16} height={16} stroke={color} />
+                  )}>
+                  {l10n.common.delete}
+                </Button>
+              </View>
+            </>
+          ) : null}
+        </View>
+      </Modal>
     </View>
   );
 });

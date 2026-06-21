@@ -1001,6 +1001,9 @@
       "clone": "Clone to chat",
       "cloned": "Document cloned into the active chat.",
       "cloneFailed": "Could not clone document into chat.",
+      "copy": "Copy",
+      "copied": "Copied document text.",
+      "copyFailed": "Could not copy document.",
       "share": "Share",
       "shareFailed": "Could not share document.",
       "binaryCloneBlocked": "Only text-like files can be cloned into chat for now."

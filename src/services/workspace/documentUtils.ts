@@ -92,6 +92,31 @@ export function languageForWorkspacePath(path: string): string {
   return LANGUAGE_BY_EXTENSION[ext] ?? 'text';
 }
 
+export function looksLikeMarkdownDocument(content: string): boolean {
+  const text = content.trim();
+  if (!text) {
+    return false;
+  }
+
+  return (
+    /^#{1,6}\s+\S/m.test(text) ||
+    /```[\s\S]*```/m.test(text) ||
+    /^\s*[-*+]\s+\S/m.test(text) ||
+    /^\s*\d+\.\s+\S/m.test(text) ||
+    /\[[^\]]+\]\([^)]+\)/.test(text)
+  );
+}
+
+export function pathWithInferredTextExtension(
+  path: string,
+  content: string,
+): string {
+  if (extensionForPath(path)) {
+    return path;
+  }
+  return looksLikeMarkdownDocument(content) ? `${path}.md` : path;
+}
+
 export function sanitizeWorkspaceFileName(
   name: string | null | undefined,
   fallback = 'document.txt',

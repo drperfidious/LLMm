@@ -4,6 +4,7 @@ import {
   type WorkspaceEntry,
   type WorkspaceFileSystem,
 } from '../workspace';
+import {pathWithInferredTextExtension} from '../workspace/documentUtils';
 
 import type {
   TalentEngine,
@@ -236,9 +237,9 @@ export class WorkspaceWriteEngine implements TalentEngine {
   constructor(private readonly fs: WorkspaceFileSystem = workspaceFileSystem) {}
 
   async execute(args: Record<string, any>): Promise<TalentResult> {
-    const path = cleanString(args.path);
+    const rawPath = cleanString(args.path);
     const content = typeof args.content === 'string' ? args.content : '';
-    if (!path) {
+    if (!rawPath) {
       return {
         type: 'error',
         summary: 'workspace_write: missing path',
@@ -252,10 +253,13 @@ export class WorkspaceWriteEngine implements TalentEngine {
         errorMessage: 'content is required and must be a string',
       };
     }
+    const append = boolArg(args.append);
+    const path = append
+      ? rawPath
+      : pathWithInferredTextExtension(rawPath, content);
 
     try {
       const cwd = currentCwd(args.cwd);
-      const append = boolArg(args.append);
       const overwrite = boolArg(args.overwrite);
       if (!append && !overwrite && (await this.fs.exists(path, cwd))) {
         return {
@@ -295,6 +299,11 @@ export class WorkspaceWriteEngine implements TalentEngine {
           type: 'object',
           properties: {
             path: {type: 'string', description: 'Workspace file path.'},
+            file_type: {
+              type: 'string',
+              description:
+                'Optional hint such as markdown, text, json, python. For Markdown documents, include a .md extension in path.',
+            },
             content: {type: 'string', description: 'Text content to write.'},
             cwd: {
               type: 'string',

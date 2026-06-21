@@ -185,6 +185,64 @@ export const createStyles = (theme: Theme) =>
       fontFamily: 'Menlo',
       lineHeight: 18,
     },
+    reader: {
+      flex: 1,
+      backgroundColor: theme.colors.background,
+    },
+    readerHeader: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: theme.spacing.s,
+      borderBottomWidth: 1,
+      borderBottomColor: theme.colors.outlineVariant,
+      backgroundColor: theme.colors.surface,
+      paddingHorizontal: theme.spacing.default,
+      paddingVertical: theme.spacing.s,
+    },
+    readerTitleWrap: {
+      flex: 1,
+      minWidth: 0,
+      gap: 2,
+    },
+    readerTitle: {
+      color: theme.colors.onSurface,
+    },
+    readerMeta: {
+      color: theme.colors.onSurfaceVariant,
+    },
+    closeButton: {
+      width: 40,
+      height: 40,
+      borderRadius: 8,
+      alignItems: 'center',
+      justifyContent: 'center',
+      backgroundColor: theme.colors.surfaceContainerHighest,
+    },
+    readerBody: {
+      flex: 1,
+      backgroundColor: theme.colors.background,
+    },
+    readerActions: {
+      flexDirection: 'row',
+      flexWrap: 'wrap',
+      alignItems: 'center',
+      gap: theme.spacing.s,
+      borderTopWidth: 1,
+      borderTopColor: theme.colors.outlineVariant,
+      backgroundColor: theme.colors.surface,
+      padding: theme.spacing.default,
+    },
+    previewScroll: {
+      flex: 1,
+    },
+    markdownPreviewContent: {
+      padding: theme.spacing.default,
+      paddingBottom: theme.spacing.default * 2,
+    },
+    rawPreviewContent: {
+      padding: theme.spacing.default,
+      paddingBottom: theme.spacing.default * 2,
+    },
     actionRow: {
       flexDirection: 'row',
       flexWrap: 'wrap',

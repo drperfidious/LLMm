@@ -91,6 +91,28 @@ describe('Workspace file talent engines', () => {
     });
   });
 
+  it('adds .md when writing extensionless markdown content', async () => {
+    const fs = makeFs();
+
+    const result = await new WorkspaceWriteEngine(fs as any).execute({
+      path: 'python-reference',
+      content: '# Python syntax\n\n- imports\n- functions',
+      cwd: '/',
+    });
+
+    expect(result.type).toBe('text');
+    expect(fs.exists).toHaveBeenCalledWith('python-reference.md', '/');
+    expect(fs.writeFile).toHaveBeenCalledWith(
+      'python-reference.md',
+      '# Python syntax\n\n- imports\n- functions',
+      {
+        cwd: '/',
+        append: false,
+        maxBytes: 512 * 1024,
+      },
+    );
+  });
+
   it('requires confirmation before deleting', async () => {
     const fs = makeFs();
     const result = await new WorkspaceDeleteEngine(fs as any).execute({

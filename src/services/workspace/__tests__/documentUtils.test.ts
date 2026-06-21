@@ -3,6 +3,7 @@ import {
   formatDocumentForChat,
   isTextLikeWorkspacePath,
   languageForWorkspacePath,
+  pathWithInferredTextExtension,
   sanitizeWorkspaceFileName,
 } from '../documentUtils';
 
@@ -17,6 +18,18 @@ describe('workspace document utils', () => {
     expect(languageForWorkspacePath('/documents/note.md')).toBe('markdown');
     expect(languageForWorkspacePath('/documents/app.tsx')).toBe('typescript');
     expect(languageForWorkspacePath('/documents/plain')).toBe('text');
+  });
+
+  it('infers .md for extensionless markdown content', () => {
+    expect(
+      pathWithInferredTextExtension('docs/python-reference', '# Python'),
+    ).toBe('docs/python-reference.md');
+    expect(pathWithInferredTextExtension('docs/plain', 'hello world')).toBe(
+      'docs/plain',
+    );
+    expect(pathWithInferredTextExtension('docs/readme.txt', '# Title')).toBe(
+      'docs/readme.txt',
+    );
   });
 
   it('sanitizes import filenames for workspace paths', () => {
