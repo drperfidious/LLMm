@@ -1,4 +1,5 @@
 import type {ToolDefinition} from '../talents/types';
+import {keywordMatchesText} from '../talents/keywordMatching';
 
 type SystemMessage = {role: 'system'; content: string};
 
@@ -67,14 +68,10 @@ export function detectLikelyToolIntents(
   const builtInMatches = TOOL_RULES.filter(
     rule => enabledToolNames.has(rule.name) && rule.test(text),
   ).map(rule => rule.name);
-  const lowerText = text.toLowerCase();
   const dynamicMatches = Object.entries(keywordHints)
     .filter(([name]) => enabledToolNames.has(name))
     .filter(([, keywords]) =>
-      keywords.some(keyword => {
-        const normalized = keyword.trim().toLowerCase();
-        return normalized.length > 0 && lowerText.includes(normalized);
-      }),
+      keywords.some(keyword => keywordMatchesText(text, keyword)),
     )
     .map(([name]) => name);
   return Array.from(new Set([...builtInMatches, ...dynamicMatches]));

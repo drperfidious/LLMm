@@ -52,23 +52,24 @@ function deriveToolSchemasWithCustom(talentNames: string[]): ToolDefinition[] {
   ];
 }
 
-function mergeDefaultAgentTools(tools: ToolDefinition[]): ToolDefinition[] {
-  const existingNames = new Set(
+function getToolNames(tools: ToolDefinition[]): string[] {
+  return uniqueNames(
     tools
       .map(tool => tool.function?.name)
       .filter((name): name is string => typeof name === 'string' && !!name),
   );
-  const missingDefaults = talentStore
-    .getDefaultAgentTalentNames()
-    .filter(name => !existingNames.has(name));
-  if (missingDefaults.length === 0) {
-    return tools;
-  }
-  return [...tools, ...deriveToolSchemasWithCustom(missingDefaults)];
 }
 
-function resolveAllowedAgentTalents(palTalentNames: string[]): string[] {
-  return talentStore.resolveAllowedAgentTalentNames(palTalentNames);
+function resolveAgentToolsForMessage(
+  baseTools: ToolDefinition[],
+  messageText: string,
+): ToolDefinition[] {
+  const names = uniqueNames([
+    ...getToolNames(baseTools),
+    ...talentStore.getDefaultAgentTalentNames(),
+    ...talentStore.getKeywordMatchedTalentNames(messageText),
+  ]);
+  return deriveToolSchemasWithCustom(names);
 }
 
 // Helper function to prepare completion parameters using OpenAI-compatible
@@ -156,8 +157,9 @@ const prepareCompletion = async ({
   }
 
   const tools = isAgentMode
-    ? mergeDefaultAgentTools(
+    ? resolveAgentToolsForMessage(
         (sessionCompletionSettings.tools as ToolDefinition[] | undefined) ?? [],
+        message.text,
       )
     : [];
   const toolIntentSystemMessages = resolveToolIntentSystemMessages({
@@ -572,12 +574,14 @@ export const useChatSession = (
 
     currentMessageInfo.current = messageInfo;
 
-    // Allowed talent names for this turn. Safe default Agent talents are
-    // always available in Agent mode; side-effect talents still require the
-    // active Pal's PACT opt-in.
+    // Allowed talent names for this turn mirror the actual schemas injected
+    // into the prompt: defaults, active Pal PACT tools, and explicit keyword
+    // matches for this latest request.
     const isAgentMode = chatSessionStore.chatMode === 'agent';
     const palTalents = isAgentMode
-      ? resolveAllowedAgentTalents((pal?.pact?.talents ?? []).map(t => t.name))
+      ? getToolNames(
+          (cleanCompletionParams.tools as ToolDefinition[] | undefined) ?? [],
+        )
       : [];
 
     abortRef.current = new AbortController();

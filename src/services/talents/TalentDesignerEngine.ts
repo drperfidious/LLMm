@@ -59,10 +59,12 @@ export class TalentDesignerEngine implements TalentEngine {
         type: 'text',
         summary:
           `create_talent: saved "${talent.title}" as ${talent.name}. ` +
+          `Route keywords: ${(talent.keywords ?? []).join(', ')}. ` +
           'It is enabled for Agent mode and will participate in keyword routing immediately.',
       };
     } catch (error) {
-      const errorMessage = error instanceof Error ? error.message : String(error);
+      const errorMessage =
+        error instanceof Error ? error.message : String(error);
       return {
         type: 'error',
         summary: `create_talent: ${errorMessage}`,
@@ -103,7 +105,7 @@ export class TalentDesignerEngine implements TalentEngine {
               type: 'array',
               items: {type: 'string'},
               description:
-                'Keyword phrases that should route user requests to this talent.',
+                'Concrete trigger phrases that should route user requests to this talent. Include 3-8 phrases users would naturally type.',
             },
           },
           required: ['title', 'instructions'],

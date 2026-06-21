@@ -85,4 +85,39 @@ describe('toolIntentHints', () => {
       ),
     ).toEqual(['contract_review']);
   });
+
+  it('detects workspace file and shell intents from dynamic keywords', () => {
+    expect(
+      detectLikelyToolIntents(
+        'Make a .md in cwd with basic python syntax quick reference information',
+        [tool('workspace_write'), tool('workspace_shell')],
+        {
+          workspace_write: ['write file', 'make file', '.md', 'cwd'],
+          workspace_shell: ['shell', 'cwd', '.md', 'create file'],
+        },
+      ),
+    ).toEqual(['workspace_write', 'workspace_shell']);
+  });
+
+  it('detects calendar reads from dynamic keywords', () => {
+    expect(
+      detectLikelyToolIntents(
+        "What's coming next on my calendar?",
+        [tool('calendar_find_events')],
+        {
+          calendar_find_events: ['calendar', "what's next", 'coming next'],
+        },
+      ),
+    ).toEqual(['calendar_find_events']);
+  });
+
+  it('does not match dynamic alphanumeric keywords inside unrelated words', () => {
+    expect(
+      detectLikelyToolIntents(
+        'This prevents crashes.',
+        [tool('calendar_find_events')],
+        {calendar_find_events: ['event']},
+      ),
+    ).toEqual([]);
+  });
 });

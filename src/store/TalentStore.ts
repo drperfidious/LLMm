@@ -4,6 +4,7 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 
 import type {TalentManifest, ToolDefinition} from '../services/talents/types';
 import {CustomInstructionTalentEngine} from '../services/talents/CustomInstructionTalentEngine';
+import {keywordMatchesText} from '../services/talents/keywordMatching';
 
 export type SearchProviderId =
   | 'brave'
@@ -301,7 +302,20 @@ export const BUILTIN_TALENT_DEFAULTS: Record<string, TalentManifest> = {
     source: 'builtin',
     configurable: true,
     agentDefaultEnabled: false,
-    keywords: ['calendar', 'schedule', 'event', 'meeting', 'appointment'],
+    keywords: [
+      'calendar',
+      'schedule',
+      'event',
+      'events',
+      'meeting',
+      'appointment',
+      'appointments',
+      "what's next",
+      'whats next',
+      'coming next',
+      'upcoming',
+      'agenda',
+    ],
   },
   calendar_create_event: {
     name: 'calendar_create_event',
@@ -312,7 +326,14 @@ export const BUILTIN_TALENT_DEFAULTS: Record<string, TalentManifest> = {
     configurable: true,
     sideEffect: true,
     agentDefaultEnabled: false,
-    keywords: ['add event', 'create event', 'schedule meeting', 'calendar'],
+    keywords: [
+      'add event',
+      'create event',
+      'add to calendar',
+      'create calendar event',
+      'schedule meeting',
+      'schedule appointment',
+    ],
   },
   reminder_find: {
     name: 'reminder_find',
@@ -364,7 +385,15 @@ export const BUILTIN_TALENT_DEFAULTS: Record<string, TalentManifest> = {
     source: 'builtin',
     configurable: true,
     agentDefaultEnabled: false,
-    keywords: ['list files', 'ls', 'workspace', 'documents', 'directory'],
+    keywords: [
+      'list files',
+      'ls',
+      'workspace',
+      'documents',
+      'directory',
+      'cwd',
+      'current directory',
+    ],
   },
   workspace_read: {
     name: 'workspace_read',
@@ -374,7 +403,15 @@ export const BUILTIN_TALENT_DEFAULTS: Record<string, TalentManifest> = {
     source: 'builtin',
     configurable: true,
     agentDefaultEnabled: false,
-    keywords: ['read file', 'cat', 'workspace', 'documents', 'open file'],
+    keywords: [
+      'read file',
+      'cat',
+      'workspace',
+      'documents',
+      'open file',
+      'cwd',
+      'current directory',
+    ],
   },
   workspace_write: {
     name: 'workspace_write',
@@ -385,7 +422,22 @@ export const BUILTIN_TALENT_DEFAULTS: Record<string, TalentManifest> = {
     configurable: true,
     sideEffect: true,
     agentDefaultEnabled: false,
-    keywords: ['write file', 'create file', 'append file', 'save document'],
+    keywords: [
+      'write file',
+      'create file',
+      'make file',
+      'make a file',
+      'append file',
+      'save document',
+      'create document',
+      'make document',
+      'write document',
+      'markdown',
+      '.md',
+      'md file',
+      'cwd',
+      'current directory',
+    ],
   },
   workspace_delete: {
     name: 'workspace_delete',
@@ -396,7 +448,7 @@ export const BUILTIN_TALENT_DEFAULTS: Record<string, TalentManifest> = {
     configurable: true,
     sideEffect: true,
     agentDefaultEnabled: false,
-    keywords: ['delete file', 'remove file', 'rm', 'workspace'],
+    keywords: ['delete file', 'remove file', 'remove document', 'rm'],
   },
   workspace_search: {
     name: 'workspace_search',
@@ -424,6 +476,13 @@ export const BUILTIN_TALENT_DEFAULTS: Record<string, TalentManifest> = {
       'workspace',
       'files',
       'documents',
+      'cwd',
+      'current directory',
+      '.md',
+      'markdown',
+      'make file',
+      'create file',
+      'save document',
       'read file',
       'write file',
       'grep',
@@ -451,6 +510,16 @@ export function normalizeTalentName(input: string): string {
     .replace(/_+/g, '_')
     .replace(/^_+|_+$/g, '')
     .slice(0, 48);
+}
+
+function deriveFallbackTalentKeywords({
+  name,
+  title,
+}: {
+  name: string;
+  title: string;
+}): string[] {
+  return uniqueStrings([title, name.replace(/_/g, ' '), name]);
 }
 
 function normalizeCount(value: unknown): number {
@@ -593,12 +662,15 @@ class TalentStore {
       return undefined;
     }
     const now = new Date().toISOString();
+    const providedKeywords = uniqueStrings(talent.keywords ?? []);
     return {
       name,
       title,
       description,
       instructions,
-      keywords: uniqueStrings(talent.keywords ?? []),
+      keywords: providedKeywords.length
+        ? providedKeywords
+        : deriveFallbackTalentKeywords({name, title}),
       source:
         talent.source === 'agent' || talent.source === 'installed'
           ? talent.source
@@ -811,6 +883,23 @@ class TalentStore {
       }
     });
     return hints;
+  }
+
+  getKeywordMatchedTalentNames(messageText: string): string[] {
+    const lowerText = messageText.trim().toLowerCase();
+    if (!lowerText) {
+      return [];
+    }
+
+    return this.getAllTalentNames().filter(name => {
+      const settings = this.getSettings(name);
+      if (!settings.enabled) {
+        return false;
+      }
+      return settings.keywords.some(keyword =>
+        keywordMatchesText(lowerText, keyword),
+      );
+    });
   }
 }
 

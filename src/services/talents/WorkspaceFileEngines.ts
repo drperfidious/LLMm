@@ -60,7 +60,15 @@ export class WorkspaceListEngine implements TalentEngine {
     name: this.name,
     title: 'List workspace files',
     description: 'List files in the app-contained LLMm workspace.',
-    keywords: ['list files', 'ls', 'workspace', 'documents', 'directory'],
+    keywords: [
+      'list files',
+      'ls',
+      'workspace',
+      'documents',
+      'directory',
+      'cwd',
+      'current directory',
+    ],
   };
 
   constructor(private readonly fs: WorkspaceFileSystem = workspaceFileSystem) {}
@@ -130,7 +138,15 @@ export class WorkspaceReadEngine implements TalentEngine {
     name: this.name,
     title: 'Read workspace file',
     description: 'Read a text file from the app-contained LLMm workspace.',
-    keywords: ['read file', 'cat', 'workspace', 'documents', 'open file'],
+    keywords: [
+      'read file',
+      'cat',
+      'workspace',
+      'documents',
+      'open file',
+      'cwd',
+      'current directory',
+    ],
   };
 
   constructor(private readonly fs: WorkspaceFileSystem = workspaceFileSystem) {}
@@ -199,7 +215,22 @@ export class WorkspaceWriteEngine implements TalentEngine {
     title: 'Write workspace file',
     description: 'Create or update a text file in the app-contained workspace.',
     sideEffect: true,
-    keywords: ['write file', 'create file', 'append file', 'save document'],
+    keywords: [
+      'write file',
+      'create file',
+      'make file',
+      'make a file',
+      'append file',
+      'save document',
+      'create document',
+      'make document',
+      'write document',
+      'markdown',
+      '.md',
+      'md file',
+      'cwd',
+      'current directory',
+    ],
   };
 
   constructor(private readonly fs: WorkspaceFileSystem = workspaceFileSystem) {}
@@ -299,7 +330,7 @@ export class WorkspaceDeleteEngine implements TalentEngine {
     title: 'Delete workspace file',
     description: 'Delete a file or directory from the app-contained workspace.',
     sideEffect: true,
-    keywords: ['delete file', 'remove file', 'rm', 'workspace'],
+    keywords: ['delete file', 'remove file', 'remove document', 'rm'],
   };
 
   constructor(private readonly fs: WorkspaceFileSystem = workspaceFileSystem) {}
