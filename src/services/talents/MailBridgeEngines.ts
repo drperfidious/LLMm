@@ -128,7 +128,71 @@ function bridgeConfigError(): TalentResult {
     type: 'error',
     summary: 'mail: bridge endpoint is not configured',
     errorMessage:
-      'Configure Mail bridge endpoint in Talents before using mail_search, mail_read, or mail_send.',
+      'Configure Mail bridge endpoint in Talents before using mail_search, mail_read, or mail_send. Gmail and IMAP/SMTP profiles still use the bridge endpoint until a native mail engine is added.',
+  };
+}
+
+function configuredMailAccount(): string {
+  const settings = talentStore.mailBridgeSettings;
+  return settings.accountEmail || settings.username;
+}
+
+function configuredMailUsername(): string {
+  const settings = talentStore.mailBridgeSettings;
+  return settings.username || settings.accountEmail;
+}
+
+function bridgeHeaders(secret: string): Record<string, string> {
+  const settings = talentStore.mailBridgeSettings;
+  if (!secret || settings.provider !== 'custom_bridge') {
+    return {};
+  }
+  return {Authorization: `Bearer ${secret}`};
+}
+
+function bridgePayload(
+  body: Record<string, any>,
+  secret: string,
+): Record<string, any> {
+  const settings = talentStore.mailBridgeSettings;
+  const accountEmail = configuredMailAccount();
+  const username = configuredMailUsername();
+  const directProvider = settings.provider !== 'custom_bridge';
+
+  return {
+    accountEmail: accountEmail || undefined,
+    mailProvider: settings.provider,
+    mailConfig: {
+      provider: settings.provider,
+      accountEmail: accountEmail || undefined,
+      username: username || undefined,
+      inboxFolder: settings.inboxFolder,
+      sentFolder: settings.sentFolder,
+      imap:
+        directProvider && settings.imapHost
+          ? {
+              host: settings.imapHost,
+              port: settings.imapPort,
+              security: settings.imapSecurity,
+            }
+          : undefined,
+      smtp:
+        directProvider && settings.smtpHost
+          ? {
+              host: settings.smtpHost,
+              port: settings.smtpPort,
+              security: settings.smtpSecurity,
+            }
+          : undefined,
+    },
+    mailAuth:
+      directProvider && secret
+        ? {
+            username: username || undefined,
+            password: secret,
+          }
+        : undefined,
+    ...body,
   };
 }
 
@@ -154,12 +218,9 @@ async function postToBridge(
     headers: {
       Accept: 'application/json',
       'Content-Type': 'application/json',
-      ...(token ? {Authorization: `Bearer ${token}`} : {}),
+      ...bridgeHeaders(token),
     },
-    body: JSON.stringify({
-      accountEmail: settings.accountEmail || undefined,
-      ...body,
-    }),
+    body: JSON.stringify(bridgePayload(body, token)),
   });
 
   if (!response.ok) {
@@ -207,12 +268,17 @@ export async function checkMailBridgeStatus(
 
   try {
     const token = await tokenProvider();
+    const directProvider = settings.provider !== 'custom_bridge';
     const response = await fetch(`${endpoint}/mail/status`, {
-      method: 'GET',
+      method: directProvider ? 'POST' : 'GET',
       headers: {
         Accept: 'application/json',
-        ...(token ? {Authorization: `Bearer ${token}`} : {}),
+        ...(directProvider ? {'Content-Type': 'application/json'} : {}),
+        ...bridgeHeaders(token),
       },
+      ...(directProvider
+        ? {body: JSON.stringify(bridgePayload({}, token))}
+        : {}),
     });
 
     if (!response.ok) {

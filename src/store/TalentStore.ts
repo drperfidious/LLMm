@@ -30,12 +30,24 @@ export type WebSearchSettings = {
 };
 
 export type MailBridgeSettings = {
+  provider: MailProviderId;
   endpoint: string;
   accountEmail: string;
+  username: string;
+  imapHost: string;
+  imapPort: number;
+  imapSecurity: MailSecurityMode;
+  smtpHost: string;
+  smtpPort: number;
+  smtpSecurity: MailSecurityMode;
   inboxFolder: string;
   sentFolder: string;
   defaultLimit: number;
 };
+
+export type MailProviderId = 'gmail' | 'imap_smtp' | 'custom_bridge';
+
+export type MailSecurityMode = 'ssl' | 'starttls' | 'none';
 
 export type TalentRuntimeSettings = {
   enabled?: boolean;
@@ -57,6 +69,12 @@ export const SEARCH_PROVIDER_LABELS: Record<SearchProviderId, string> = {
   exa: 'Exa',
   searxng: 'SearXNG',
   mcp_http: 'MCP HTTP',
+};
+
+export const MAIL_PROVIDER_LABELS: Record<MailProviderId, string> = {
+  gmail: 'Gmail',
+  imap_smtp: 'IMAP/SMTP',
+  custom_bridge: 'Bridge',
 };
 
 export const BRAVE_SEARCH_COUNTRIES = [
@@ -157,10 +175,18 @@ export const DEFAULT_WEB_SEARCH_SETTINGS: WebSearchSettings = {
 };
 
 export const DEFAULT_MAIL_BRIDGE_SETTINGS: MailBridgeSettings = {
+  provider: 'gmail',
   endpoint: '',
   accountEmail: '',
+  username: '',
+  imapHost: 'imap.gmail.com',
+  imapPort: 993,
+  imapSecurity: 'ssl',
+  smtpHost: 'smtp.gmail.com',
+  smtpPort: 465,
+  smtpSecurity: 'ssl',
   inboxFolder: 'INBOX',
-  sentFolder: 'Sent',
+  sentFolder: '[Gmail]/Sent Mail',
   defaultLimit: 5,
 };
 
@@ -532,26 +558,103 @@ function normalizeMailLimit(value: unknown): number {
   return Number.isFinite(n) ? Math.max(1, Math.min(25, Math.floor(n))) : 5;
 }
 
+function normalizeMailPort(value: unknown, fallback: number): number {
+  const n = typeof value === 'number' ? value : Number(value);
+  return Number.isFinite(n)
+    ? Math.max(1, Math.min(65535, Math.floor(n)))
+    : fallback;
+}
+
+function normalizeMailProvider(value: unknown): MailProviderId {
+  return value === 'gmail' || value === 'imap_smtp' || value === 'custom_bridge'
+    ? value
+    : DEFAULT_MAIL_BRIDGE_SETTINGS.provider;
+}
+
+function normalizeMailSecurity(
+  value: unknown,
+  fallback: MailSecurityMode,
+): MailSecurityMode {
+  return value === 'ssl' || value === 'starttls' || value === 'none'
+    ? value
+    : fallback;
+}
+
+function mailProviderDefaults(provider: MailProviderId): MailBridgeSettings {
+  if (provider === 'custom_bridge') {
+    return {
+      ...DEFAULT_MAIL_BRIDGE_SETTINGS,
+      provider,
+      imapHost: '',
+      imapPort: 993,
+      smtpHost: '',
+      smtpPort: 465,
+      sentFolder: 'Sent',
+    };
+  }
+
+  if (provider === 'imap_smtp') {
+    return {
+      ...DEFAULT_MAIL_BRIDGE_SETTINGS,
+      provider,
+      imapHost: '',
+      imapPort: 993,
+      smtpHost: '',
+      smtpPort: 465,
+      sentFolder: 'Sent',
+    };
+  }
+
+  return {
+    ...DEFAULT_MAIL_BRIDGE_SETTINGS,
+    provider,
+  };
+}
+
 function normalizeMailBridgeSettings(
   settings?: Partial<MailBridgeSettings>,
 ): MailBridgeSettings {
+  const provider = normalizeMailProvider(settings?.provider);
+  const defaults = mailProviderDefaults(provider);
   return {
+    ...defaults,
+    provider,
     endpoint:
       typeof settings?.endpoint === 'string' ? settings.endpoint.trim() : '',
     accountEmail:
       typeof settings?.accountEmail === 'string'
         ? settings.accountEmail.trim()
         : '',
+    username:
+      typeof settings?.username === 'string' ? settings.username.trim() : '',
+    imapHost:
+      typeof settings?.imapHost === 'string'
+        ? settings.imapHost.trim()
+        : defaults.imapHost,
+    imapPort: normalizeMailPort(settings?.imapPort, defaults.imapPort),
+    imapSecurity: normalizeMailSecurity(
+      settings?.imapSecurity,
+      defaults.imapSecurity,
+    ),
+    smtpHost:
+      typeof settings?.smtpHost === 'string'
+        ? settings.smtpHost.trim()
+        : defaults.smtpHost,
+    smtpPort: normalizeMailPort(settings?.smtpPort, defaults.smtpPort),
+    smtpSecurity: normalizeMailSecurity(
+      settings?.smtpSecurity,
+      defaults.smtpSecurity,
+    ),
     inboxFolder:
       typeof settings?.inboxFolder === 'string' && settings.inboxFolder.trim()
         ? settings.inboxFolder.trim()
-        : DEFAULT_MAIL_BRIDGE_SETTINGS.inboxFolder,
+        : defaults.inboxFolder,
     sentFolder:
       typeof settings?.sentFolder === 'string' && settings.sentFolder.trim()
         ? settings.sentFolder.trim()
-        : DEFAULT_MAIL_BRIDGE_SETTINGS.sentFolder,
+        : defaults.sentFolder,
     defaultLimit: normalizeMailLimit(
-      settings?.defaultLimit ?? DEFAULT_MAIL_BRIDGE_SETTINGS.defaultLimit,
+      settings?.defaultLimit ?? defaults.defaultLimit,
     ),
   };
 }

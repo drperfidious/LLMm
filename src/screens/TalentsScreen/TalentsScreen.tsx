@@ -45,9 +45,11 @@ import {
   talentRegistry,
 } from '../../services/talents';
 import {
+  MAIL_PROVIDER_LABELS,
   SEARCH_PROVIDER_LABELS,
   talentStore,
   type CustomTalentDefinition,
+  type MailProviderId,
   type SearchProviderId,
 } from '../../store/TalentStore';
 
@@ -175,6 +177,8 @@ export const TalentsScreen: React.FC = observer(() => {
   }, [talentStore.customTalents.length]);
 
   const provider = talentStore.webSearchSettings.provider;
+  const mailProvider = talentStore.mailBridgeSettings.provider;
+  const isDirectMailProvider = mailProvider !== 'custom_bridge';
   const endpointConfigured =
     !!talentStore.webSearchSettings.endpoint?.trim() &&
     (provider === 'searxng' || provider === 'mcp_http');
@@ -212,6 +216,38 @@ export const TalentsScreen: React.FC = observer(() => {
     setWebKey('');
     setStatusMessage('');
     setStatusTone('default');
+  };
+
+  const handleMailProviderChange = (nextProvider: MailProviderId) => {
+    const current = talentStore.mailBridgeSettings;
+    if (nextProvider === 'gmail') {
+      talentStore.updateMailBridgeSettings({
+        provider: nextProvider,
+        username: current.username || current.accountEmail,
+        imapHost: 'imap.gmail.com',
+        imapPort: 993,
+        imapSecurity: 'ssl',
+        smtpHost: 'smtp.gmail.com',
+        smtpPort: 465,
+        smtpSecurity: 'ssl',
+        inboxFolder: 'INBOX',
+        sentFolder: '[Gmail]/Sent Mail',
+      });
+    } else if (nextProvider === 'imap_smtp') {
+      talentStore.updateMailBridgeSettings({
+        provider: nextProvider,
+        sentFolder:
+          current.provider === 'gmail' ? 'Sent' : current.sentFolder || 'Sent',
+      });
+    } else {
+      talentStore.updateMailBridgeSettings({
+        provider: nextProvider,
+        sentFolder: current.sentFolder || 'Sent',
+      });
+    }
+    setMailToken('');
+    setMailStatusMessage('');
+    setMailStatusTone('default');
   };
 
   const handleSaveWebKey = async () => {
@@ -265,7 +301,11 @@ export const TalentsScreen: React.FC = observer(() => {
     const nextToken = mailToken.trim();
     if (!nextToken) {
       setMailStatusTone('error');
-      setMailStatusMessage('Enter a bridge token first.');
+      setMailStatusMessage(
+        isDirectMailProvider
+          ? 'Enter the mail account password or app password first.'
+          : 'Enter a bridge token first.',
+      );
       return;
     }
 
@@ -278,10 +318,18 @@ export const TalentsScreen: React.FC = observer(() => {
       setMailToken('');
       setMailTokenConfigured(true);
       setMailStatusTone('success');
-      setMailStatusMessage('Saved mail bridge token.');
+      setMailStatusMessage(
+        isDirectMailProvider
+          ? 'Saved mail account credential.'
+          : 'Saved mail bridge token.',
+      );
     } else {
       setMailStatusTone('error');
-      setMailStatusMessage('Could not save mail bridge token.');
+      setMailStatusMessage(
+        isDirectMailProvider
+          ? 'Could not save mail account credential.'
+          : 'Could not save mail bridge token.',
+      );
     }
   };
 
@@ -295,10 +343,18 @@ export const TalentsScreen: React.FC = observer(() => {
       setMailToken('');
       setMailTokenConfigured(false);
       setMailStatusTone('success');
-      setMailStatusMessage('Cleared mail bridge token.');
+      setMailStatusMessage(
+        isDirectMailProvider
+          ? 'Cleared mail account credential.'
+          : 'Cleared mail bridge token.',
+      );
     } else {
       setMailStatusTone('error');
-      setMailStatusMessage('Could not clear mail bridge token.');
+      setMailStatusMessage(
+        isDirectMailProvider
+          ? 'Could not clear mail account credential.'
+          : 'Could not clear mail bridge token.',
+      );
     }
   };
 
@@ -452,13 +508,26 @@ export const TalentsScreen: React.FC = observer(() => {
       : copy.webSearch.notConfigured;
   const mailEndpointConfigured =
     !!talentStore.mailBridgeSettings.endpoint.trim();
+  const mailIdentityConfigured =
+    !isDirectMailProvider ||
+    (!!talentStore.mailBridgeSettings.accountEmail.trim() &&
+      !!talentStore.mailBridgeSettings.imapHost.trim() &&
+      !!talentStore.mailBridgeSettings.smtpHost.trim() &&
+      mailTokenConfigured);
+  const mailFullyConfigured = mailEndpointConfigured && mailIdentityConfigured;
   const mailConfiguredLabel = isLoadingMailSecret
     ? 'Checking'
-    : mailEndpointConfigured
-      ? mailTokenConfigured
-        ? 'Ready'
-        : 'Endpoint set'
-      : 'Not configured';
+    : mailFullyConfigured
+      ? 'Ready'
+      : mailEndpointConfigured
+        ? isDirectMailProvider
+          ? mailTokenConfigured
+            ? 'Needs account'
+            : 'Needs password'
+          : mailTokenConfigured
+            ? 'Ready'
+            : 'Endpoint set'
+        : 'Not configured';
 
   return (
     <SafeAreaView style={styles.safeArea} edges={['bottom']}>
@@ -745,17 +814,17 @@ export const TalentsScreen: React.FC = observer(() => {
             <View style={styles.sectionTitleRow}>
               <LockIcon width={22} height={22} stroke={theme.colors.primary} />
               <Text variant="titleMedium" style={styles.sectionTitle}>
-                Mail bridge
+                Mail account
               </Text>
             </View>
             <View
               style={[
                 styles.statusPill,
-                mailEndpointConfigured
+                mailFullyConfigured
                   ? styles.statusPillReady
                   : styles.statusPillMissing,
               ]}>
-              {mailEndpointConfigured ? (
+              {mailFullyConfigured ? (
                 <CheckCircleIcon
                   width={14}
                   height={14}
@@ -768,16 +837,33 @@ export const TalentsScreen: React.FC = observer(() => {
                 testID="talents-mail-status"
                 style={[
                   styles.statusPillText,
-                  !mailEndpointConfigured && styles.statusPillTextMissing,
+                  !mailFullyConfigured && styles.statusPillTextMissing,
                 ]}>
                 {mailConfiguredLabel}
               </Text>
             </View>
           </View>
 
+          <View style={styles.providerWrap}>
+            {(Object.keys(MAIL_PROVIDER_LABELS) as MailProviderId[]).map(
+              providerId => (
+                <Button
+                  key={providerId}
+                  compact
+                  mode={mailProvider === providerId ? 'contained' : 'outlined'}
+                  onPress={() => handleMailProviderChange(providerId)}
+                  style={styles.providerButton}>
+                  {MAIL_PROVIDER_LABELS[providerId]}
+                </Button>
+              ),
+            )}
+          </View>
+
           <TextInput
             testID="talents-mail-endpoint-input"
-            label="Bridge endpoint"
+            label={
+              isDirectMailProvider ? 'Mail bridge endpoint' : 'Bridge endpoint'
+            }
             placeholder="https://mail.example.com"
             value={talentStore.mailBridgeSettings.endpoint}
             autoCapitalize="none"
@@ -799,6 +885,104 @@ export const TalentsScreen: React.FC = observer(() => {
             }
             style={styles.input}
           />
+
+          {isDirectMailProvider ? (
+            <>
+              <TextInput
+                testID="talents-mail-username-input"
+                label="Login username"
+                placeholder="Blank uses account email"
+                value={talentStore.mailBridgeSettings.username}
+                autoCapitalize="none"
+                autoCorrect={false}
+                keyboardType="email-address"
+                onChangeText={username =>
+                  talentStore.updateMailBridgeSettings({username})
+                }
+                style={styles.input}
+              />
+
+              <View style={styles.compactInputRow}>
+                <TextInput
+                  testID="talents-mail-imap-host-input"
+                  label="IMAP host"
+                  value={talentStore.mailBridgeSettings.imapHost}
+                  autoCapitalize="none"
+                  autoCorrect={false}
+                  onChangeText={imapHost =>
+                    talentStore.updateMailBridgeSettings({imapHost})
+                  }
+                  style={styles.compactInput}
+                />
+                <TextInput
+                  testID="talents-mail-imap-port-input"
+                  label="Port"
+                  keyboardType="number-pad"
+                  value={String(talentStore.mailBridgeSettings.imapPort)}
+                  onChangeText={imapPort =>
+                    talentStore.updateMailBridgeSettings({
+                      imapPort: Number(imapPort),
+                    })
+                  }
+                  style={styles.compactInput}
+                />
+                <TextInput
+                  testID="talents-mail-imap-security-input"
+                  label="Security"
+                  placeholder="ssl"
+                  value={talentStore.mailBridgeSettings.imapSecurity}
+                  autoCapitalize="none"
+                  autoCorrect={false}
+                  onChangeText={imapSecurity =>
+                    talentStore.updateMailBridgeSettings({
+                      imapSecurity: imapSecurity as 'ssl' | 'starttls' | 'none',
+                    })
+                  }
+                  style={styles.compactInput}
+                />
+              </View>
+
+              <View style={styles.compactInputRow}>
+                <TextInput
+                  testID="talents-mail-smtp-host-input"
+                  label="SMTP host"
+                  value={talentStore.mailBridgeSettings.smtpHost}
+                  autoCapitalize="none"
+                  autoCorrect={false}
+                  onChangeText={smtpHost =>
+                    talentStore.updateMailBridgeSettings({smtpHost})
+                  }
+                  style={styles.compactInput}
+                />
+                <TextInput
+                  testID="talents-mail-smtp-port-input"
+                  label="Port"
+                  keyboardType="number-pad"
+                  value={String(talentStore.mailBridgeSettings.smtpPort)}
+                  onChangeText={smtpPort =>
+                    talentStore.updateMailBridgeSettings({
+                      smtpPort: Number(smtpPort),
+                    })
+                  }
+                  style={styles.compactInput}
+                />
+                <TextInput
+                  testID="talents-mail-smtp-security-input"
+                  label="Security"
+                  placeholder="ssl"
+                  value={talentStore.mailBridgeSettings.smtpSecurity}
+                  autoCapitalize="none"
+                  autoCorrect={false}
+                  onChangeText={smtpSecurity =>
+                    talentStore.updateMailBridgeSettings({
+                      smtpSecurity: smtpSecurity as 'ssl' | 'starttls' | 'none',
+                    })
+                  }
+                  style={styles.compactInput}
+                />
+              </View>
+            </>
+          ) : null}
 
           <View style={styles.compactInputRow}>
             <TextInput
@@ -839,7 +1023,13 @@ export const TalentsScreen: React.FC = observer(() => {
 
           <TextInput
             testID="talents-mail-token-input"
-            label="Optional bridge token"
+            label={
+              mailProvider === 'gmail'
+                ? 'Gmail app password'
+                : mailProvider === 'imap_smtp'
+                  ? 'Mail account password/key'
+                  : 'Optional bridge token'
+            }
             value={mailToken}
             onChangeText={text => {
               setMailToken(text);
@@ -847,7 +1037,13 @@ export const TalentsScreen: React.FC = observer(() => {
               setMailStatusTone('default');
             }}
             placeholder={
-              mailTokenConfigured ? 'Enter a new token to replace it' : ''
+              mailTokenConfigured
+                ? isDirectMailProvider
+                  ? 'Enter a new password/key to replace it'
+                  : 'Enter a new token to replace it'
+                : mailProvider === 'gmail'
+                  ? 'Paste Google app password'
+                  : ''
             }
             autoCapitalize="none"
             autoCorrect={false}
@@ -870,8 +1066,11 @@ export const TalentsScreen: React.FC = observer(() => {
           />
 
           <Text variant="bodySmall" style={styles.helperText}>
-            Search/read/send use the configured bridge. Sending still requires
-            explicit user confirmation before the agent can call mail_send.
+            {mailProvider === 'gmail'
+              ? 'Gmail requires IMAP enabled and a Google app password from account security. The app password is stored in Keychain and passed only to the configured mail bridge.'
+              : isDirectMailProvider
+                ? 'IMAP/SMTP credentials are stored in Keychain and passed only to the configured mail bridge.'
+                : 'Search/read/send use the configured bridge. Sending still requires explicit user confirmation before the agent can call mail_send.'}
           </Text>
 
           {mailStatusMessage ? (
@@ -894,7 +1093,7 @@ export const TalentsScreen: React.FC = observer(() => {
               loading={isSavingMailSecret}
               disabled={isSavingMailSecret || !mailToken.trim()}
               style={styles.primaryButton}>
-              Save token
+              {isDirectMailProvider ? 'Save credential' : 'Save token'}
             </Button>
             <Button
               testID="talents-mail-token-clear"
@@ -912,7 +1111,7 @@ export const TalentsScreen: React.FC = observer(() => {
                 isTestingMailBridge ||
                 !talentStore.mailBridgeSettings.endpoint.trim()
               }>
-              Test bridge
+              Test mail
             </Button>
           </View>
         </View>

@@ -44,6 +44,7 @@ describe('MailBridgeEngines', () => {
 
   it('searches mail through the configured bridge', async () => {
     talentStore.updateMailBridgeSettings({
+      provider: 'custom_bridge',
       endpoint: 'https://mail.example.com/',
       accountEmail: 'user@example.com',
       inboxFolder: 'Inbox',
@@ -83,8 +84,54 @@ describe('MailBridgeEngines', () => {
     expect(result.summary).toContain('msg-1');
   });
 
+  it('passes Gmail profile and app password to the bridge payload', async () => {
+    talentStore.updateMailBridgeSettings({
+      provider: 'gmail',
+      endpoint: 'https://mail.example.com/',
+      accountEmail: 'user@gmail.com',
+      username: 'user@gmail.com',
+    });
+    mockFetch({
+      body: {
+        messages: [],
+      },
+    });
+
+    await new MailSearchEngine(async () => 'gmail-app-password').execute({
+      query: 'receipt',
+    });
+
+    const [url, options] = (global as any).fetch.mock.calls[0];
+    expect(url).toBe('https://mail.example.com/mail/search');
+    expect(options.headers.Authorization).toBeUndefined();
+    expect(JSON.parse(options.body)).toEqual(
+      expect.objectContaining({
+        accountEmail: 'user@gmail.com',
+        mailProvider: 'gmail',
+        mailConfig: expect.objectContaining({
+          provider: 'gmail',
+          imap: {
+            host: 'imap.gmail.com',
+            port: 993,
+            security: 'ssl',
+          },
+          smtp: {
+            host: 'smtp.gmail.com',
+            port: 465,
+            security: 'ssl',
+          },
+        }),
+        mailAuth: {
+          username: 'user@gmail.com',
+          password: 'gmail-app-password',
+        },
+      }),
+    );
+  });
+
   it('checks configured mail bridge capabilities', async () => {
     talentStore.updateMailBridgeSettings({
+      provider: 'custom_bridge',
       endpoint: 'https://mail.example.com/',
       accountEmail: 'user@example.com',
     });
@@ -111,6 +158,7 @@ describe('MailBridgeEngines', () => {
 
   it('surfaces bridge status HTTP failures', async () => {
     talentStore.updateMailBridgeSettings({
+      provider: 'custom_bridge',
       endpoint: 'https://mail.example.com',
     });
     mockFetch({
@@ -130,6 +178,7 @@ describe('MailBridgeEngines', () => {
 
   it('reads a message by ID', async () => {
     talentStore.updateMailBridgeSettings({
+      provider: 'custom_bridge',
       endpoint: 'https://mail.example.com',
     });
     mockFetch({
@@ -160,6 +209,7 @@ describe('MailBridgeEngines', () => {
 
   it('requires explicit confirmation before sending', async () => {
     talentStore.updateMailBridgeSettings({
+      provider: 'custom_bridge',
       endpoint: 'https://mail.example.com',
     });
     mockFetch({});
@@ -177,6 +227,7 @@ describe('MailBridgeEngines', () => {
 
   it('sends after confirmation', async () => {
     talentStore.updateMailBridgeSettings({
+      provider: 'custom_bridge',
       endpoint: 'https://mail.example.com',
       accountEmail: 'user@example.com',
     });

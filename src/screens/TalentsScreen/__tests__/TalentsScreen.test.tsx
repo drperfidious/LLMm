@@ -170,7 +170,7 @@ describe('TalentsScreen', () => {
     );
   });
 
-  it('configures mail bridge settings and stores token in Keychain', async () => {
+  it('configures Gmail mail settings and stores app password in Keychain', async () => {
     const {getByTestId, getByText} = renderScreen();
 
     fireEvent.changeText(
@@ -181,27 +181,50 @@ describe('TalentsScreen', () => {
       getByTestId('talents-mail-account-input'),
       ' user@example.com ',
     );
+    fireEvent.changeText(
+      getByTestId('talents-mail-username-input'),
+      ' login@example.com ',
+    );
+    fireEvent.changeText(
+      getByTestId('talents-mail-imap-host-input'),
+      ' imap.gmail.com ',
+    );
+    fireEvent.changeText(getByTestId('talents-mail-imap-port-input'), ' 993 ');
+    fireEvent.changeText(
+      getByTestId('talents-mail-smtp-host-input'),
+      ' smtp.gmail.com ',
+    );
+    fireEvent.changeText(getByTestId('talents-mail-smtp-port-input'), ' 465 ');
     fireEvent.changeText(getByTestId('talents-mail-inbox-input'), ' Inbox ');
     fireEvent.changeText(getByTestId('talents-mail-limit-input'), ' 9 ');
-    fireEvent.changeText(getByTestId('talents-mail-token-input'), ' token ');
+    fireEvent.changeText(
+      getByTestId('talents-mail-token-input'),
+      ' app-password ',
+    );
     fireEvent.press(getByTestId('talents-mail-token-save'));
 
     await waitFor(() => {
       expect(Keychain.setGenericPassword).toHaveBeenCalledWith(
         'mail_bridge_token',
-        'token',
+        'app-password',
         {service: 'llmm.talent.mail-bridge'},
       );
     });
     expect(talentStore.mailBridgeSettings).toEqual(
       expect.objectContaining({
+        provider: 'gmail',
         endpoint: 'https://mail.example',
         accountEmail: 'user@example.com',
+        username: 'login@example.com',
+        imapHost: 'imap.gmail.com',
+        imapPort: 993,
+        smtpHost: 'smtp.gmail.com',
+        smtpPort: 465,
         inboxFolder: 'Inbox',
         defaultLimit: 9,
       }),
     );
-    expect(getByText('Saved mail bridge token.')).toBeTruthy();
+    expect(getByText('Saved mail account credential.')).toBeTruthy();
   });
 
   it('tests the configured mail bridge status endpoint', async () => {
@@ -226,7 +249,7 @@ describe('TalentsScreen', () => {
     await waitFor(() => {
       expect((global as any).fetch).toHaveBeenCalledWith(
         'https://mail.example/mail/status',
-        expect.objectContaining({method: 'GET'}),
+        expect.objectContaining({method: 'POST'}),
       );
     });
     expect(getByText(/Capabilities: search, read, send/)).toBeTruthy();
