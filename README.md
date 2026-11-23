@@ -1,329 +1,132 @@
-<div align="center">
+# LLMm
 
-<img src="src/assets/pocketpal-dark-v2.png" alt="PocketPal AI logo" width="120" />
+**Local-first iOS LLM workspace** — private chat, agent tools, documents, on-device benchmarking, and model tuning.
 
-# PocketPal AI
-
-**A private AI assistant that runs entirely on your phone.**
-
-Chat with language models, give them a voice, and let them use tools — all on-device. No account, no cloud, no internet required.
-
-<a href="https://pocketpal.dev/"><strong>pocketpal.dev</strong></a> ·
-<a href="#get-the-app">Get the app</a> ·
-<a href="https://pocketpal.dev/leaderboard">Leaderboard</a> ·
-<a href="https://palshub.ai/">PalsHub</a> ·
-<a href="https://github.com/a-ghorbani/pocketpal-ai/discussions">Discussions</a>
-
-<br/>
-
-[![App Store](https://img.shields.io/badge/App_Store-Download-0D96F6?logo=apple&logoColor=white)](https://apps.apple.com/us/app/pocketpal-ai/id6502579498)
-[![Google Play](https://img.shields.io/badge/Google_Play-Get_it-414141?logo=googleplay&logoColor=white)](https://play.google.com/store/apps/details?id=com.pocketpalai)
-
-[![Latest release](https://img.shields.io/github/v/release/a-ghorbani/pocketpal-ai?sort=semver)](https://github.com/a-ghorbani/pocketpal-ai/releases)
-[![License: MIT](https://img.shields.io/github/license/a-ghorbani/pocketpal-ai)](LICENSE)
-[![Stars](https://img.shields.io/github/stars/a-ghorbani/pocketpal-ai)](https://github.com/a-ghorbani/pocketpal-ai/stargazers)
-[![Open issues](https://img.shields.io/github/issues/a-ghorbani/pocketpal-ai)](https://github.com/a-ghorbani/pocketpal-ai/issues)
-[![Sponsor](https://img.shields.io/github/sponsors/a-ghorbani?logo=githubsponsors)](https://github.com/sponsors/a-ghorbani)
-
-</div>
+> Built on [PocketPal AI](https://github.com/a-ghorbani/pocketpal-ai) and heavily reworked for iOS.  
+> Made by [Dr.Perfidious](https://github.com/drperfidious).
 
 ---
 
-## Why PocketPal AI?
+## What is LLMm?
 
-Most AI apps are a thin window onto someone else's server — every message you type gets shipped off, logged, and analyzed somewhere you can't see. PocketPal flips that around: **the AI lives on your phone, and your conversations never leave it.**
+LLMm runs large language models entirely on-device using [llama.rn](https://github.com/mybigday/llama.rn) and Apple Metal. Everything stays on your iPhone — no cloud, no telemetry, no subscriptions. On top of the base PocketPal runtime, LLMm adds a full **agent tool layer**, native iOS integrations, and a benchmarking harness for evaluating models on real hardware.
 
-- **🔒 Private by default** — every prompt, response, and document stays on your device. Nothing is uploaded or stored on external servers.
-- **✈️ Works offline** — download a model once and it just works, with no connection and no account. On a plane, on a trail, anywhere.
-- **📱 Runs on hardware you already own** — real language models, voices, and tools, tuned to make the most of your phone's CPU, GPU, and NPU.
-- **🆓 Free and open source** — no subscription, no "pro" tier to unlock the AI. MIT-licensed and built in the open.
-
-> **Privacy note:** The only data that ever leaves your device is what you explicitly choose to share — benchmark results (if you opt into the leaderboard) and feedback you submit through the app.
-
-## Contents
-
-- [Features](#features)
-- [Get the app](#get-the-app)
-- [How it works](#how-it-works)
-- [Using the app](#using-the-app)
-- [For developers](#for-developers)
-- [Contributing](#contributing)
-- [Roadmap](#roadmap)
-- [Community & support](#community--support)
-- [License](#license)
+---
 
 ## Features
 
-- **🧠 On-device chat** — run GGUF language models (Gemma, Qwen, Phi, Llama, and more) fully offline.
-- **🗣️ Text-to-speech** — give your assistant a voice with on-device neural TTS (Kokoro and other engines), no cloud calls.
-- **🎭 Pals** — create personalized assistants with their own model, system prompt, and personality (Assistant and Roleplay types).
-- **🛍️ [PalsHub](https://palshub.ai/)** — discover and install community Pals, including premium ones via in-app checkout.
-- **🛠️ Talents & tools** — let capable Pals call built-in tools (calculator, date/time, rich HTML rendering) inside a tool-use loop.
-- **📥 Hugging Face integration** — search and download GGUF models, including gated ones, directly from the HF Hub with your access token.
-- **📊 Benchmarking** — measure tokens/sec and memory, and optionally compare on the [AI Phone Leaderboard](https://pocketpal.dev/leaderboard).
-- **⚡ Hardware acceleration** — CPU, GPU (Metal on iOS, OpenCL/Adreno on Android), and NPU (Qualcomm Hexagon) inference paths, with graceful fallback.
-- **🌍 Localized** — available in 11 languages, on phones and tablets, including full iPad support.
+### 🤖 Agent Mode & Talent System
 
-## Get the app
+LLMm extends the base app with a structured **tool/talent** system that lets on-device models interact with your iPhone natively.
 
-| Platform | |
-| --- | --- |
-| **iOS / iPadOS** | [![Download on the App Store](https://img.shields.io/badge/App_Store-Download-0D96F6?logo=apple&logoColor=white)](https://apps.apple.com/us/app/pocketpal-ai/id6502579498) |
-| **Android** | [![Get it on Google Play](https://img.shields.io/badge/Google_Play-Get_it-414141?logo=googleplay&logoColor=white)](https://play.google.com/store/apps/details?id=com.pocketpalai) |
+| Talent | What it does |
+|--------|-------------|
+| **Web Search** | Brave Search API integration with per-country and safe-search controls |
+| **Workspace Files** | Read, write, search, list, and move files in a sandboxed on-device workspace. PDF text extraction via native PDFKit. |
+| **Workspace Shell** | Run sandboxed shell commands from within the workspace |
+| **Apple Calendar & Reminders** | Search, create, complete, and delete calendar events and reminders via EventKit |
+| **Apple Clock** | Create and cancel AlarmKit-backed timers and alarms (iOS 26+) |
+| **Mail Bridge** | Read and send email via a self-hosted HTTP mail bridge. Supports Gmail and IMAP/SMTP with SSL/STARTTLS |
+| **Custom Instructions** | Per-agent tool definitions |
 
-**Three steps to your first chat:**
+**Keyword routing** — agents automatically activate matching talents based on user message content (e.g. "check my email" routes to Mail Bridge, "set a timer" routes to Clock), without requiring the model to know which tools are available.
 
-1. **Install** PocketPal from the App Store or Google Play.
-2. **Download a model** — tap the menu (☰) → **Models**, pick one that fits your phone, and download (or add one from Hugging Face).
-3. **Load it and start chatting** — that's it, you're running AI fully offline.
+**Robust tool-call parsing** — the agent runner tolerates malformed JSON tool arguments from models, with multi-stage repair using JSON5 and control-character escaping. Duplicate tool calls are detected and short-circuited to prevent loops.
 
-## How it works
+---
 
-You don't need to know any of this to use PocketPal — but if you're curious how a phone runs real AI offline, here's the short version.
+### 📱 Native iOS Integrations
 
-PocketPal is a four-layer stack, from the silicon up to the chat UI. Each layer has one job, and the dependency direction is strictly top-down — the JS app talks to native bridges, bridges talk to inference engines, engines target hardware backends.
+New Swift/ObjC modules added on top of the base app:
 
-<div align="center">
-  <img src="assets/images and logos/stack-diagram-dark.png" alt="PocketPal AI on-device stack — UI & Tool Use → Bridging → Engine → Hardware" width="100%">
-</div>
+- **`AppleCalendarModule`** — EventKit calendar + reminder bridge
+- **`AppleClockModule`** — AlarmKit timer/alarm bridge (iOS 26+)
+- **`NativeMailModule`** — Compose and send mail via `MFMailComposeViewController`
+- **`PdfTextExtractor`** — Native PDFKit text extraction with configurable char limits
 
-| Layer | What runs here |
-| --- | --- |
-| **UI & Tool Use** | The React Native app (UI via React Native Paper, state via MobX, chat history in WatermelonDB). The **`AgentRunner`** drives each chat turn — streaming tokens, dispatching **Talents** (tools) when the model calls them, and feeding results back for follow-up reasoning. **Pals** are configurable personas; **PalsHub** is the in-app marketplace for sharing and buying them. |
-| **Bridging** | Native modules that connect JavaScript to the engines. [`llama.rn`](https://github.com/mybigday/llama.rn) bridges LLM inference over JSI; [`react-native-speech`](https://github.com/a-ghorbani/react-native-speech) and `onnxruntime-react-native` bridge text-to-speech. |
-| **Engine** | The inference engines. **llama.cpp** runs language models in the quantized **GGUF** format. **ONNX Runtime** runs TTS voice models in the **ONNX** format. |
-| **Hardware** | Where the math actually happens. PocketPal targets **CPU** (universal fallback), **GPU** (Metal on iOS, OpenCL on Qualcomm Adreno for Android), and **NPU** (Qualcomm Hexagon) — falling back gracefully and offloading partial layers when a full backend isn't available. |
+---
 
-## Using the app
+### ⚡ Metal & Model Tuning
 
-<details>
-<summary><strong>📥 Download & load a model</strong></summary>
+- **Per-model settings** — each model keeps its own load profile (backend, context size, batch size, K/V cache type, flash attention). Changing settings for one model no longer overwrites another.
+- **iOS Metal device selection** — treats `MTLDevice` names (e.g. "Apple A16 GPU") as stable "Metal" markers, applied consistently across Settings and profile loads.
+- **Dynamic Metal batch tuning** — optional mode that raises low batch values on Metal loads for throughput. Off by default.
+- **TurboQuant cache support** — custom `llama.rn` patch adds `Turbo2`/`Turbo3`/`Turbo4` KV cache types. Includes CPU `get-rows` coverage so turbo cache tensors don't abort on fallback paths.
+- **Flash attention safety checks** — validates that flash attention + KV cache type combinations are safe before initiating a load.
 
-<br/>
+---
 
-1. Open the app and tap the **Menu** (☰), then go to **Models**.
-2. Pick a model from the list and tap **Download**, or tap **+** to add one from Hugging Face or local storage.
-3. From Hugging Face, search GGUF models and choose a quantization that fits your device's memory and storage — download now or bookmark for later.
-4. After downloading, tap **Load** (or use the chevron icon left of the chat input to load right from the chat screen).
+### 🔢 Math Rendering
 
-<img src="assets/images and logos/Download_models.png" alt="Download Models" width="100%">
-</details>
+Chat output now renders LaTeX math without a WebView or MathJax runtime:
 
-<details>
-<summary><strong>💬 Chat</strong></summary>
+- Detects bare LaTeX commands (`\frac`, `\sqrt`, `\sum`, Greek letters, etc.) and display/inline math delimiters
+- Applies Unicode symbol substitutions (α β γ Σ ∫ ⋯ etc.) and readable fraction/root formatting
+- Skips math formatting inside code fences and inline code spans
 
-<br/>
+---
 
-1. Make sure a model is loaded.
-2. Open the **Chat** page and start talking.
-3. The screen stays awake during inference and deactivates when idle.
-4. **Copy** a full response with the copy icon, or long-press a paragraph to copy just that.
-5. **Edit** any of your messages with a long-press — the AI regenerates from your change. Hit **retry** for a fresh answer, optionally with a different model.
+### 📋 Other Improvements
 
-<img src="assets/images and logos/Chat.png" alt="Chat" width="83%">
-</details>
+- **Explore tab** — search overlay for the Pals/Agents hub with result rows and stale-guard debouncing
+- **Documents screen** — workspace file browser with document previews
+- **Donation / tips** — optional App Store in-app tips via StoreKit (`LLMmTips.storekit`)
+- **Tool trace disclosure** — collapsible trace view for agent tool call chains in chat
+- **Feedback screen** — in-app feedback form with email draft fallback
+- **i18n** — full localization key coverage for all new features
 
-<details>
-<summary><strong>🎭 Pals & PalsHub</strong></summary>
+---
 
-<br/>
+## iOS Benchmarking
 
-Create personalized assistants:
-- **Assistant Pal** — pick a default model, set a system prompt (write it yourself or have the app generate one), and customize the chat input color.
-- **Roleplay Pal** — everything above, plus location, the AI's role, and other contextual parameters.
+LLMm includes a benchmark harness for evaluating model performance on real iOS hardware.
 
-Switch personas with the Pal picker on the chat page. Browse **[PalsHub](https://palshub.ai/)** in-app to discover community Pals, including premium ones via in-app checkout (US iOS & Android).
+See [`docs/testflight-alpha.md`](docs/testflight-alpha.md) for the full TestFlight build workflow.
 
-<img src="assets/images and logos/Pals.png" alt="Assistant Pal" width="100%">
-<p><em>Creating a cocktail-recipe assistant</em></p>
-</details>
-
-<details>
-<summary><strong>📊 Benchmark your device</strong></summary>
-
-<br/>
-
-1. Open the **Benchmark** page.
-2. Run performance tests to compare speed and efficiency across models.
-3. Review tokens/sec and memory usage.
-4. Optionally share your results to the [AI Phone Leaderboard](https://pocketpal.dev/leaderboard).
-
-<img src="assets/images and logos/Benchmark.png" alt="Benchmark" width="100%">
-</details>
-
-<details>
-<summary><strong>🔑 Set up a Hugging Face token (for gated models)</strong></summary>
-
-<br/>
-
-1. Create an access token in your Hugging Face account ([docs](https://huggingface.co/docs/hub/en/security-tokens)).
-2. In PocketPal, go to **Settings → Set Token**, paste it, and save.
-
-<img src="assets/images and logos/Token_in_pocketpal.png" alt="Token setup" width="66%">
-</details>
-
-<details>
-<summary><strong>💌 Send feedback</strong></summary>
-
-<br/>
-
-Go to **App Info → "Sharing your thoughts"**, type your feedback — feature requests, suggestions, anything — and submit.
-
-<img src="assets/images and logos/Send_Feedback.png" alt="Send feedback" width="50%">
-</details>
-
-## For developers
-
-PocketPal is a standard React Native app. If you can build a React Native project, you can build PocketPal.
-
-### Prerequisites
-
-- **Node.js** — version is pinned in [`.nvmrc`](.nvmrc) (currently `22.21.0`); run `nvm use` to match it. Older Node will fail the `engines` check.
-- **Yarn 1 (Classic)** — `packageManager` is pinned to `yarn@1.22.22`.
-- **Xcode** + **CocoaPods**, and **Ruby + Bundler** (for iOS / Fastlane tooling).
-- **Android Studio** + Android SDK/NDK.
-
-See the [React Native environment setup](https://reactnative.dev/docs/set-up-your-environment) for platform details.
-
-### Clone, install & run
-
-```bash
-git clone https://github.com/a-ghorbani/pocketpal-ai
-cd pocketpal-ai
-
-nvm use                       # match the pinned Node version
-yarn install                  # install JS dependencies
-(cd ios && pod install)       # iOS only
-
-yarn start                    # Metro bundler
-yarn ios                      # build + run on iOS simulator
-yarn android                  # build + run on Android emulator
+**Quick archive:**
+```sh
+DEVELOPER_DIR=/path/to/Xcode-beta.app/Contents/Developer \
+scripts/archive-ios-testflight-xcode27.sh
 ```
 
-Core on-device chat works without any backend keys; only PalsHub/auth features need additional configuration.
-
-> **Native-change rule:** if you change `package.json`, a native module, `ios/`, `android/`, the Podfile, or `build.gradle`, re-run `pod install` and rebuild both platforms — a JS reload won't pick up native changes.
-
-### Quality gates
-
-```bash
-yarn lint           # ESLint
-yarn typecheck      # tsc --noEmit
-yarn test           # Jest
-yarn l10n:validate  # validate locale JSON (placeholders, integrity)
+**With overrides:**
+```sh
+TEAM_ID=XXXXXXXXXX \
+BUNDLE_ID=com.randyduquette.llmm \
+MARKETING_VERSION=0.4.0 \
+BUILD_NUMBER=2026062001 \
+scripts/archive-ios-testflight-xcode27.sh
 ```
 
-Run `yarn lint && yarn typecheck && yarn test` before opening a PR. Commits are validated by Commitlint ([Conventional Commits](https://www.conventionalcommits.org/)) via a Husky hook.
+---
 
-<details>
-<summary><strong>Repository layout</strong></summary>
+## Mail Bridge
 
-<br/>
+The mail talent connects to a self-hosted **LLMm mail bridge** — a small HTTP server that wraps IMAP/SMTP/Gmail. The agent never connects directly to `imap.gmail.com` or the Gmail REST API; it only talks to the bridge URL you configure (e.g. `http://192.168.1.20:8787`).
 
+Supported providers: **Gmail**, **IMAP+SMTP** (SSL / STARTTLS / plain), **custom bridge**.
+
+---
+
+## Building
+
+Requires React Native + the iOS toolchain. Node ≥ 22.21.0 is needed for Yarn package scripts without `YARN_IGNORE_ENGINES=1`.
+
+```sh
+yarn install
+yarn ios
 ```
-src/
-├── screens/        # Chat, Models, Pals, Benchmark, Settings, About, …
-├── components/     # Reusable UI
-├── store/          # MobX stores (Model, ChatSession, Pal, TTS, HF, Benchmark, …)
-├── services/
-│   ├── agent/      # AgentRunner — the chat / tool loop
-│   ├── talents/    # Tool engines + registries
-│   ├── tts/        # TTS engines (kokoro, kitten, supertonic, system)
-│   ├── palshub/    # PalsHub marketplace integration
-│   └── downloads/  # Model download manager
-├── database/       # WatermelonDB schema, models, migrations
-├── repositories/   # Data-access layer over the DB
-├── locales/        # i18n JSON + lazy loader (index.ts is the registry)
-└── hooks/  api/  theme/  utils/  config/  specs/
-```
-</details>
 
-<details>
-<summary><strong>Tech stack</strong></summary>
+For TestFlight / App Store Connect builds, use the archive script above.
 
-<br/>
+---
 
-Versions are pinned in [`package.json`](package.json); the highlights:
+## Based On
 
-| Area | Choice |
-| --- | --- |
-| Framework | React Native `0.82.1`, React `19.1.1` (New Architecture) |
-| Language | TypeScript `5.0.4` |
-| UI | React Native Paper `5.14.5`, React Navigation |
-| State | MobX `6` (`mobx`, `mobx-react`, `mobx-persist-store`) |
-| Persistence | WatermelonDB (chat history), AsyncStorage (settings), Keychain (secrets) |
-| LLM | `llama.rn` `0.12.4` → llama.cpp · GGUF |
-| TTS | `react-native-speech` `2.3.1` + `onnxruntime-react-native` `1.23.2` · ONNX |
-| Tooling | Yarn 1 (Classic), ESLint, Prettier, Jest, Husky + Commitlint |
+LLMm is a fork of [PocketPal AI](https://github.com/a-ghorbani/pocketpal-ai) by [@a-ghorbani](https://github.com/a-ghorbani), released under the [MIT License](LICENSE). The upstream project is unaffiliated with LLMm.
 
-</details>
-
-<details>
-<summary><strong>Extending PocketPal</strong></summary>
-
-<br/>
-
-A **Talent** is a tool the model can call mid-conversation. Engines are registered in a `TalentRegistry`, exposed to the model as tool schemas; the `AgentRunner` detects a call, runs the engine, and returns the result for the next turn.
-
-| Talent | Engine | Does |
-| --- | --- | --- |
-| `calculate` | `CalculateEngine` | Arithmetic / expression evaluation |
-| `datetime` | `DatetimeEngine` | Current date / time |
-| `render_html` | `RenderHtmlEngine` | Renders model-produced HTML in chat |
-
-Good first contributions:
-- A new **Talent** — implement a `TalentEngine` and register it in `src/services/talents/`.
-- A new **TTS engine** — add it under `src/services/tts/engines/`.
-- A new **locale** — add a JSON file in `src/locales/` (or translate on [Weblate](https://hosted.weblate.org/projects/pocketpal-ai/)).
-
-</details>
-
-## Contributing
-
-Contributions are welcome — bug reports, fixes, features, translations, and docs all help.
-
-1. Fork and branch: `git checkout -b feature/your-feature-name`
-2. Make your changes; run on a device/emulator (`yarn ios` / `yarn android`). Re-run `pod install` + rebuild if you touched native code.
-3. Gate locally: `yarn lint && yarn typecheck && yarn test`
-4. Commit with [Conventional Commits](https://www.conventionalcommits.org/): `git commit -m "feat: add new talent"`
-5. Push and open a pull request.
-
-Please read the [Contributing Guidelines](CONTRIBUTING.md) and [Code of Conduct](CODE_OF_CONDUCT.md) first. Want to translate PocketPal into your language? Join us on [Weblate](https://hosted.weblate.org/projects/pocketpal-ai/).
-
-## Roadmap
-
-- **Tool use expansion** — grow the Talents catalog and deepen the agentic loop so Pals can do more, fully on-device.
-
-Have an idea or found a bug? [Open an issue](https://github.com/a-ghorbani/pocketpal-ai/issues/new/choose) or start a [discussion](https://github.com/a-ghorbani/pocketpal-ai/discussions).
-
-## Community & support
-
-- 💬 **Questions & ideas** — [GitHub Discussions](https://github.com/a-ghorbani/pocketpal-ai/discussions)
-- 🐛 **Bugs & requests** — [GitHub Issues](https://github.com/a-ghorbani/pocketpal-ai/issues/new/choose)
-- 🌐 **Website** — [pocketpal.dev](https://pocketpal.dev/)
-- ❤️ **Support development** — PocketPal is free and ad-free; [sponsoring](https://github.com/sponsors/a-ghorbani) helps keep it that way.
+---
 
 ## License
 
-Licensed under the [MIT License](LICENSE).
-
-## Acknowledgements
-
-PocketPal AI stands on the shoulders of the open-source community, including:
-
-- **[llama.cpp](https://github.com/ggerganov/llama.cpp)** — efficient on-device LLM inference.
-- **[llama.rn](https://github.com/mybigday/llama.rn)** — llama.cpp bindings for React Native.
-- **[react-native-speech](https://github.com/a-ghorbani/react-native-speech)** — React Native TTS bridge powering on-device voices.
-- **[ONNX Runtime](https://onnxruntime.ai/)** — cross-platform inference engine powering on-device TTS.
-- **[React Native](https://reactnative.dev/)**, **[MobX](https://mobx.js.org/)**, **[React Native Paper](https://callstack.github.io/react-native-paper/)**, **[React Navigation](https://reactnavigation.org/)**, **[WatermelonDB](https://github.com/Nozbe/WatermelonDB)**, and many other open-source libraries that make this project possible.
-
-<div align="center">
-<br/>
-
-Made with ❤️ for people who want AI that stays on their phone.
-
-<br/>
-
-<sub>If PocketPal is useful to you, consider giving it a ⭐ — it helps others find the project.</sub>
-
-</div>
+MIT — see [LICENSE](LICENSE).
