@@ -77,10 +77,19 @@ export const createStyles = (theme: Theme, insets: EdgeInsets) =>
       borderBottomWidth: 1,
       borderBottomColor: theme.colors.surfaceVariant,
     },
+    compactSection: {
+      paddingTop: theme.spacing.default * 1.5,
+    },
     sectionTitle: {
       ...theme.fonts.titleMedium,
       color: theme.colors.onSurface,
       marginBottom: theme.spacing.default,
+    },
+    mutedDescription: {
+      color: theme.colors.onSurfaceVariant,
+      marginBottom: theme.spacing.default,
+      lineHeight: 22,
+      opacity: 0.85,
     },
     actionButton: {
       borderWidth: 1,
@@ -114,6 +123,14 @@ export const createStyles = (theme: Theme, insets: EdgeInsets) =>
       ...theme.fonts.titleMedium,
       color: theme.colors.onPrimary,
       letterSpacing: 0.5,
+    },
+    supportHint: {
+      ...theme.fonts.bodySmall,
+      color: theme.colors.onSurfaceVariant,
+      lineHeight: 18,
+      marginTop: theme.spacing.default / 2,
+      opacity: 0.75,
+      textAlign: 'center',
     },
     feedbackButtonContent: {
       flexDirection: 'row-reverse',

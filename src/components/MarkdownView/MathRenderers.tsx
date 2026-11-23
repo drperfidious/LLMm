@@ -4,7 +4,7 @@ import {ScrollView, Text, View} from 'react-native';
 import {useTheme} from '../../hooks';
 
 import {createMathStyles} from './mathStyles';
-import {decodeMathValue} from './math';
+import {decodeMathValue, formatMathValue} from './math';
 
 function getMathPayload(props: any): {kind?: string; value: string} {
   const attribs = props?.tnode?.domNode?.attribs ?? {};
@@ -25,7 +25,7 @@ export const MathSpanRenderer = ({TDefaultRenderer, ...props}: any) => {
 
   return (
     <Text style={styles.inlineMath} testID="markdown-inline-math">
-      {value}
+      {formatMathValue(value)}
     </Text>
   );
 };
@@ -42,7 +42,7 @@ export const MathDivRenderer = ({TDefaultRenderer, ...props}: any) => {
   return (
     <View style={styles.blockMathContainer} testID="markdown-block-math">
       <ScrollView horizontal nestedScrollEnabled>
-        <Text style={styles.blockMath}>{value}</Text>
+        <Text style={styles.blockMath}>{formatMathValue(value)}</Text>
       </ScrollView>
     </View>
   );

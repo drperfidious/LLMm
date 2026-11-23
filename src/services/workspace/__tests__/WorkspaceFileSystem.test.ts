@@ -1,6 +1,11 @@
 import * as RNFS from '@dr.pogodin/react-native-fs';
 
 import {WorkspaceFileSystem} from '../WorkspaceFileSystem';
+import {extractPdfText} from '../PdfTextExtractor';
+
+jest.mock('../PdfTextExtractor', () => ({
+  extractPdfText: jest.fn(),
+}));
 
 const asMock = <T extends (...args: any[]) => any>(fn: T) =>
   fn as unknown as jest.Mock;
@@ -102,6 +107,98 @@ describe('WorkspaceFileSystem', () => {
     expect(result).toEqual({path: '/docs/note.md', type: 'file'});
   });
 
+  it('lists prunable empty directories from deepest to shallowest', async () => {
+    const fs = new WorkspaceFileSystem('/app/Documents/llmm-workspace');
+    asMock(RNFS.readDir).mockImplementation(async (path: string) => {
+      if (path.endsWith('/empty/nested')) {
+        return [];
+      }
+      if (path.endsWith('/empty')) {
+        return [
+          {
+            name: 'nested',
+            path: '/app/Documents/llmm-workspace/empty/nested',
+            size: 0,
+            isDirectory: () => true,
+          },
+        ];
+      }
+      if (path.endsWith('/docs')) {
+        return [
+          {
+            name: 'note.md',
+            path: '/app/Documents/llmm-workspace/docs/note.md',
+            size: 12,
+            isDirectory: () => false,
+          },
+        ];
+      }
+      return [
+        {
+          name: 'empty',
+          path: '/app/Documents/llmm-workspace/empty',
+          size: 0,
+          isDirectory: () => true,
+        },
+        {
+          name: 'docs',
+          path: '/app/Documents/llmm-workspace/docs',
+          size: 0,
+          isDirectory: () => true,
+        },
+      ];
+    });
+
+    await expect(fs.listEmptyDirectories()).resolves.toEqual([
+      expect.objectContaining({path: '/empty/nested', type: 'directory'}),
+      expect.objectContaining({path: '/empty', type: 'directory'}),
+    ]);
+  });
+
+  it('deletes only empty directories selected by the prune scan', async () => {
+    const fs = new WorkspaceFileSystem('/app/Documents/llmm-workspace');
+    asMock(RNFS.readDir).mockImplementation(async (path: string) => {
+      if (path.endsWith('/empty/nested')) {
+        return [];
+      }
+      if (path.endsWith('/empty')) {
+        return [
+          {
+            name: 'nested',
+            path: '/app/Documents/llmm-workspace/empty/nested',
+            size: 0,
+            isDirectory: () => true,
+          },
+        ];
+      }
+      return [
+        {
+          name: 'empty',
+          path: '/app/Documents/llmm-workspace/empty',
+          size: 0,
+          isDirectory: () => true,
+        },
+      ];
+    });
+    asMock(RNFS.stat).mockResolvedValue({
+      size: 0,
+      isDirectory: () => true,
+    });
+
+    const result = await fs.deleteEmptyDirectories();
+
+    expect(result.deleted.map(entry => entry.path)).toEqual([
+      '/empty/nested',
+      '/empty',
+    ]);
+    expect(RNFS.unlink).toHaveBeenCalledWith(
+      '/app/Documents/llmm-workspace/empty/nested',
+    );
+    expect(RNFS.unlink).toHaveBeenCalledWith(
+      '/app/Documents/llmm-workspace/empty',
+    );
+  });
+
   it('returns an available display path without overwriting', async () => {
     const fs = new WorkspaceFileSystem('/app/Documents/llmm-workspace');
     asMock(RNFS.exists)
@@ -121,5 +218,28 @@ describe('WorkspaceFileSystem', () => {
     expect(RNFS.exists).toHaveBeenCalledWith(
       '/app/Documents/llmm-workspace/docs/note.md',
     );
+  });
+
+  it('extracts PDF text through the native PDF extractor', async () => {
+    const fs = new WorkspaceFileSystem('/app/Documents/llmm-workspace');
+    asMock(RNFS.stat).mockResolvedValue({
+      size: 48 * 1024,
+      isDirectory: () => false,
+    });
+    asMock(extractPdfText).mockResolvedValue({
+      text: 'Page 1:\nReport text',
+      pageCount: 2,
+      truncated: false,
+    });
+
+    const result = await fs.readFile('/docs/report.pdf', '/', 256 * 1024);
+
+    expect(extractPdfText).toHaveBeenCalledWith(
+      '/app/Documents/llmm-workspace/docs/report.pdf',
+      256 * 1024,
+    );
+    expect(result.content).toContain('PDF pages: 2');
+    expect(result.content).toContain('Report text');
+    expect(result.size).toBe(48 * 1024);
   });
 });

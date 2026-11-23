@@ -1,7 +1,7 @@
 import * as React from 'react';
 import {Text} from 'react-native';
 
-import {render} from '../../../../jest/test-utils';
+import {fireEvent, render} from '../../../../jest/test-utils';
 
 import {TalentSurface} from '../TalentSurface';
 import {talentUIRegistry} from '../../../services/talents/TalentUIRegistry';
@@ -56,6 +56,46 @@ describe('TalentSurface', () => {
     const {getByTestId, getByText} = render(<TalentSurface step={step} />);
     expect(getByTestId('tool-used-chip')).toBeTruthy();
     expect(getByText('used datetime')).toBeTruthy();
+  });
+
+  it('keeps tool trace collapsed until tapped, then shows exact call and output', () => {
+    const step: AgentStep = {
+      toolCalls: [
+        {
+          id: 'c0',
+          function: {
+            name: 'calendar_find_events',
+            arguments: '{"query":"class","limit":5}',
+          },
+        },
+      ],
+      toolOutcomes: [
+        {
+          callId: 'c0',
+          toolName: 'calendar_find_events',
+          result: {type: 'text', summary: 'Found class'},
+          responseContent: 'calendar_find_events: found 1 event(s)',
+        },
+      ],
+    };
+    const {getByTestId, getByText, queryByTestId, queryByText} = render(
+      <TalentSurface step={step} />,
+    );
+
+    expect(getByTestId('tool-trace-collapsed')).toBeTruthy();
+    expect(queryByText('Call')).toBeNull();
+
+    fireEvent.press(getByTestId('tool-trace-collapsed'));
+
+    expect(getByTestId('tool-trace-expanded')).toBeTruthy();
+    expect(getByText('Call')).toBeTruthy();
+    expect(getByText(/"query": "class"/)).toBeTruthy();
+    expect(getByText('calendar_find_events: found 1 event(s)')).toBeTruthy();
+
+    fireEvent.press(getByTestId('tool-trace-close'));
+
+    expect(queryByTestId('tool-trace-expanded')).toBeNull();
+    expect(getByTestId('tool-trace-collapsed')).toBeTruthy();
   });
 
   it('#3 error outcome → ToolErrorBlock (subtle, low-prominence)', () => {

@@ -1,6 +1,7 @@
 export {
   WorkspaceFileSystem,
   workspaceFileSystem,
+  type WorkspaceDirectoryCleanupResult,
   type WorkspaceDeleteResult,
   type WorkspaceEntry,
   type WorkspaceImportResult,
@@ -24,7 +25,10 @@ export {
   extensionForPath,
   formatBytes,
   formatDocumentForChat,
+  isPdfWorkspacePath,
+  isReadableWorkspacePath,
   isTextLikeWorkspacePath,
   languageForWorkspacePath,
   sanitizeWorkspaceFileName,
 } from './documentUtils';
+export {extractPdfText, type PdfTextExtractionResult} from './PdfTextExtractor';

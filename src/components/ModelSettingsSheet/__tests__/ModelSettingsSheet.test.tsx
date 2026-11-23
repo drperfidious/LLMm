@@ -264,6 +264,97 @@ describe('ModelSettingsSheet', () => {
     );
   });
 
+  it('saves inactive per-model cache profile changes', async () => {
+    modelStore.modelInitProfiles = {
+      [mockModel.id]: {
+        version: 1,
+        settings: {
+          ...modelStore.contextInitParams,
+          cache_type_k: 'turbo4' as any,
+          cache_type_v: 'turbo4' as any,
+        },
+        allowUnsafeContextLimits: true,
+        requestedContextSize: modelStore.contextInitParams.n_ctx,
+        updatedAt: '2026-06-20T00:00:00.000Z',
+        source: 'manual',
+      },
+    };
+
+    const {getByTestId, getByText} = render(
+      <ModelSettingsSheet {...defaultProps} />,
+    );
+
+    await act(async () => {
+      fireEvent.press(getByTestId('profile-cache-k-turbo3'));
+    });
+    await act(async () => {
+      fireEvent.press(getByTestId('profile-cache-v-turbo3'));
+    });
+    await act(async () => {
+      fireEvent.press(getByText('Save Changes'));
+    });
+
+    expect(modelStore.saveModelInitProfileSettings).toHaveBeenCalledWith(
+      mockModel.id,
+      expect.objectContaining({
+        cache_type_k: 'turbo3',
+        cache_type_v: 'turbo3',
+      }),
+      true,
+      'manual',
+      modelStore.contextInitParams.n_ctx,
+    );
+    expect(
+      modelStore.modelInitProfiles[mockModel.id].settings.cache_type_k,
+    ).toBe('turbo3');
+    expect(
+      modelStore.modelInitProfiles[mockModel.id].settings.cache_type_v,
+    ).toBe('turbo3');
+  });
+
+  it('saves offloaded cache profile changes over ownerless global defaults', async () => {
+    modelStore.activeModelId = undefined;
+    modelStore.contextInitParams = {
+      ...modelStore.contextInitParams,
+      cache_type_k: 'iq4_nl' as any,
+      cache_type_v: 'iq4_nl' as any,
+    };
+    modelStore.modelInitProfiles = {};
+
+    const {getByTestId, getByText} = render(
+      <ModelSettingsSheet {...defaultProps} />,
+    );
+
+    await act(async () => {
+      fireEvent.press(getByTestId('profile-cache-k-turbo4'));
+    });
+    await act(async () => {
+      fireEvent.press(getByTestId('profile-cache-v-turbo4'));
+    });
+    await act(async () => {
+      fireEvent.press(getByText('Save Changes'));
+    });
+
+    expect(modelStore.saveModelInitProfileSettings).toHaveBeenCalledWith(
+      mockModel.id,
+      expect.objectContaining({
+        cache_type_k: 'turbo4',
+        cache_type_v: 'turbo4',
+      }),
+      true,
+      'manual',
+      modelStore.contextInitParams.n_ctx,
+    );
+    expect(
+      modelStore.modelInitProfiles[mockModel.id].settings.cache_type_k,
+    ).toBe('turbo4');
+    expect(
+      modelStore.modelInitProfiles[mockModel.id].settings.cache_type_v,
+    ).toBe('turbo4');
+    expect(modelStore.contextInitParams.cache_type_k).toBe('turbo4');
+    expect(modelStore.contextInitParams.cache_type_v).toBe('turbo4');
+  });
+
   it('allows profile number inputs to be cleared while editing', async () => {
     const {getByTestId, getByText} = render(
       <ModelSettingsSheet {...defaultProps} />,

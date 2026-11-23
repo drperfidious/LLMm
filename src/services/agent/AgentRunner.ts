@@ -5,6 +5,7 @@ import type {
 } from '../../utils/completionTypes';
 import type {ChatMessage} from '../../utils/types';
 import type {AgentToolCall, AgentToolOutcome} from '../../utils/types';
+import * as JSON5 from 'json5';
 
 import type {
   AgentEvent,
@@ -17,6 +18,120 @@ import {extractToolCallsFromCompletionResult} from './toolCallParser';
 
 const DEFAULT_MAX_TURNS = 5;
 const MAX_IDENTICAL_TOOL_EXECUTIONS = 1;
+const INVALID_ARGUMENT_REPLAY = '{"_error":"invalid_json_arguments"}';
+
+function stripCodeFence(value: string): string {
+  const trimmed = value.trim();
+  const match = trimmed.match(
+    /^```(?:json|tool_call|tool_calls)?\s*([\s\S]*?)\s*```$/i,
+  );
+  return match ? match[1].trim() : trimmed;
+}
+
+function escapeControlCharsInsideJsonStrings(value: string): string {
+  let out = '';
+  let inString = false;
+  let escaped = false;
+
+  for (const ch of value) {
+    if (!inString) {
+      out += ch;
+      if (ch === '"') {
+        inString = true;
+      }
+      continue;
+    }
+
+    if (escaped) {
+      out += ch;
+      escaped = false;
+      continue;
+    }
+
+    if (ch === '\\') {
+      out += ch;
+      escaped = true;
+      continue;
+    }
+
+    if (ch === '"') {
+      out += ch;
+      inString = false;
+      continue;
+    }
+
+    if (ch === '\n') {
+      out += '\\n';
+    } else if (ch === '\r') {
+      out += '\\r';
+    } else if (ch === '\t') {
+      out += '\\t';
+    } else {
+      out += ch;
+    }
+  }
+
+  return out;
+}
+
+function parseToolArgumentObject(rawValue: string):
+  | {
+      parsedArgs: Record<string, unknown>;
+      repaired: boolean;
+    }
+  | {
+      reason: 'invalid_json' | 'non_object';
+      repaired: false;
+    } {
+  const raw = stripCodeFence(rawValue || '{}');
+  const candidates = Array.from(
+    new Set([
+      raw,
+      escapeControlCharsInsideJsonStrings(raw),
+      raw.startsWith('"') && raw.endsWith('"')
+        ? (() => {
+            try {
+              return JSON.parse(raw);
+            } catch {
+              return undefined;
+            }
+          })()
+        : undefined,
+    ].filter((candidate): candidate is string => typeof candidate === 'string')),
+  );
+
+  let parsedNonObject = false;
+  const parsers: Array<(value: string) => unknown> = [
+    value => JSON.parse(value),
+    value => JSON5.parse(value),
+  ];
+
+  for (const [index, candidate] of candidates.entries()) {
+    for (const [parserIndex, parse] of parsers.entries()) {
+      try {
+        const parsed = parse(candidate);
+        if (
+          typeof parsed === 'object' &&
+          parsed !== null &&
+          !Array.isArray(parsed)
+        ) {
+          return {
+            parsedArgs: parsed as Record<string, unknown>,
+            repaired: index > 0 || parserIndex > 0,
+          };
+        }
+        parsedNonObject = true;
+      } catch {
+        // Try the next parser/candidate.
+      }
+    }
+  }
+
+  return {
+    reason: parsedNonObject ? 'non_object' : 'invalid_json',
+    repaired: false,
+  };
+}
 
 /**
  * Bridge a synchronous-callback engine into an async iterator. The
@@ -134,31 +249,33 @@ async function executeOne(
     return {callId, toolName: fnName, result, responseContent: summary};
   }
 
-  let parsedArgs: Record<string, unknown> = {};
-  try {
-    const parsed = JSON.parse(call.function?.arguments || '{}');
-    if (
-      typeof parsed !== 'object' ||
-      parsed === null ||
-      Array.isArray(parsed)
-    ) {
-      const summary = `Error: arguments for ${fnName} must be a JSON object`;
-      const result: TalentResult = {
-        type: 'error',
-        summary,
-        errorMessage: summary,
-      };
-      return {callId, toolName: fnName, result, responseContent: summary};
-    }
-    parsedArgs = parsed as Record<string, unknown>;
-  } catch {
-    const summary = `Error: invalid JSON arguments for ${fnName}`;
+  const parsedArgumentResult = parseToolArgumentObject(
+    call.function?.arguments || '{}',
+  );
+  if (!('parsedArgs' in parsedArgumentResult)) {
+    const originalLength = (call.function?.arguments ?? '').length;
+    call.function.arguments = INVALID_ARGUMENT_REPLAY;
+    const summary =
+      parsedArgumentResult.reason === 'non_object'
+        ? `Error: JSON arguments for ${fnName} must be a JSON object`
+        : `Error: invalid JSON arguments for ${fnName}`;
     const result: TalentResult = {
       type: 'error',
       summary,
-      errorMessage: summary,
+      errorMessage:
+        `${summary}. The malformed argument payload was ${originalLength} characters and was removed from follow-up context. Retry with a smaller valid JSON object.`,
     };
-    return {callId, toolName: fnName, result, responseContent: summary};
+    return {
+      callId,
+      toolName: fnName,
+      result,
+      responseContent: result.errorMessage,
+    };
+  }
+
+  const parsedArgs = parsedArgumentResult.parsedArgs;
+  if (parsedArgumentResult.repaired) {
+    call.function.arguments = JSON.stringify(parsedArgs);
   }
 
   try {

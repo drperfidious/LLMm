@@ -3,10 +3,20 @@ import {
   MailReadEngine,
   MailSearchEngine,
   MailSendEngine,
+  validateMailBridgeEndpoint,
 } from '../MailBridgeEngines';
 import {talentStore} from '../../../store/TalentStore';
+import {NativeModules, Platform} from 'react-native';
 
 const originalFetch = (global as any).fetch;
+const originalNativeMailModule = (NativeModules as any).NativeMailModule;
+
+const nativeMail = {
+  check: jest.fn(),
+  search: jest.fn(),
+  read: jest.fn(),
+  send: jest.fn(),
+};
 
 function mockFetch(response: {
   ok?: boolean;
@@ -24,13 +34,23 @@ function mockFetch(response: {
 }
 
 describe('MailBridgeEngines', () => {
-  afterEach(() => {
-    (global as any).fetch = originalFetch;
-    talentStore.resetMailBridgeSettings();
-    jest.restoreAllMocks();
+  beforeEach(() => {
+    Object.defineProperty(Platform, 'OS', {
+      configurable: true,
+      get: () => 'ios',
+    });
+    (NativeModules as any).NativeMailModule = nativeMail;
+    jest.resetAllMocks();
+    (global as any).fetch = jest.fn();
   });
 
-  it('returns a config error before endpoint is configured', async () => {
+  afterEach(() => {
+    (global as any).fetch = originalFetch;
+    (NativeModules as any).NativeMailModule = originalNativeMailModule;
+    talentStore.resetMailBridgeSettings();
+  });
+
+  it('returns a direct-account config error before Gmail is configured', async () => {
     mockFetch({});
 
     const result = await new MailSearchEngine(async () => '').execute({
@@ -38,8 +58,9 @@ describe('MailBridgeEngines', () => {
     });
 
     expect(result.type).toBe('error');
-    expect(result.summary).toContain('bridge endpoint');
+    expect(result.summary).toContain('direct account');
     expect((global as any).fetch).not.toHaveBeenCalled();
+    expect(nativeMail.search).not.toHaveBeenCalled();
   });
 
   it('searches mail through the configured bridge', async () => {
@@ -84,27 +105,22 @@ describe('MailBridgeEngines', () => {
     expect(result.summary).toContain('msg-1');
   });
 
-  it('passes Gmail profile and app password to the bridge payload', async () => {
+  it('passes Gmail profile and app password to native direct mail', async () => {
     talentStore.updateMailBridgeSettings({
       provider: 'gmail',
-      endpoint: 'https://mail.example.com/',
       accountEmail: 'user@gmail.com',
       username: 'user@gmail.com',
     });
-    mockFetch({
-      body: {
-        messages: [],
-      },
+    nativeMail.search.mockResolvedValue({
+      messages: [],
     });
 
     await new MailSearchEngine(async () => 'gmail-app-password').execute({
       query: 'receipt',
     });
 
-    const [url, options] = (global as any).fetch.mock.calls[0];
-    expect(url).toBe('https://mail.example.com/mail/search');
-    expect(options.headers.Authorization).toBeUndefined();
-    expect(JSON.parse(options.body)).toEqual(
+    expect((global as any).fetch).not.toHaveBeenCalled();
+    expect(nativeMail.search).toHaveBeenCalledWith(
       expect.objectContaining({
         accountEmail: 'user@gmail.com',
         mailProvider: 'gmail',
@@ -127,6 +143,111 @@ describe('MailBridgeEngines', () => {
         },
       }),
     );
+  });
+
+  it('checks direct Gmail account capabilities through native mail', async () => {
+    talentStore.updateMailBridgeSettings({
+      provider: 'gmail',
+      accountEmail: 'user@gmail.com',
+      username: 'user@gmail.com',
+    });
+    nativeMail.check.mockResolvedValue({
+      ok: true,
+      provider: 'native-gmail',
+      accountEmail: 'user@gmail.com',
+      capabilities: ['search', 'read', 'send'],
+      folders: ['INBOX'],
+    });
+
+    const result = await checkMailBridgeStatus(async () => 'gmail-app-password');
+
+    expect(result.type).toBe('text');
+    expect(nativeMail.check).toHaveBeenCalled();
+    expect(result.summary).toContain('Direct mail ok');
+    expect(result.summary).toContain('native-gmail');
+    expect((global as any).fetch).not.toHaveBeenCalled();
+  });
+
+  it('normalizes bare HTTPS and local HTTP bridge endpoints', () => {
+    expect(validateMailBridgeEndpoint(' mail.example.com/ ')).toEqual({
+      ok: true,
+      endpoint: 'https://mail.example.com',
+    });
+    expect(validateMailBridgeEndpoint(' 192.168.1.20:8787/ ')).toEqual({
+      ok: true,
+      endpoint: 'http://192.168.1.20:8787',
+    });
+  });
+
+  it('rejects direct Gmail IMAP/SMTP and Gmail REST API endpoints for bridge mode', async () => {
+    talentStore.updateMailBridgeSettings({
+      provider: 'custom_bridge',
+      endpoint: 'imap.gmail.com',
+    });
+    mockFetch({});
+
+    const result = await checkMailBridgeStatus(async () => 'app-password');
+
+    expect(result.type).toBe('error');
+    if (result.type === 'error') {
+      expect(result.errorMessage).toContain('IMAP/SMTP mail server');
+    }
+    expect((global as any).fetch).not.toHaveBeenCalled();
+
+    expect(
+      validateMailBridgeEndpoint(
+        'https://gmail.googleapis.com/gmail/v1/users/me/messages',
+      ),
+    ).toEqual(
+      expect.objectContaining({
+        ok: false,
+        errorMessage: expect.stringContaining('Google Gmail REST API'),
+      }),
+    );
+  });
+
+  it('adds mail bridge context to network request failures', async () => {
+    talentStore.updateMailBridgeSettings({
+      provider: 'custom_bridge',
+      endpoint: 'http://192.168.1.20:8787',
+      accountEmail: 'user@gmail.com',
+    });
+    (global as any).fetch = jest
+      .fn()
+      .mockRejectedValue(new Error('Network request failed'));
+
+    const result = await new MailSearchEngine(async () => 'app-password').execute(
+      {
+        query: 'receipt',
+      },
+    );
+
+    expect(result.type).toBe('error');
+    if (result.type === 'error') {
+      expect(result.errorMessage).toContain(
+        'Could not reach the mail bridge over HTTP(S)',
+      );
+    }
+  });
+
+  it('adds direct mail context to native network failures', async () => {
+    talentStore.updateMailBridgeSettings({
+      provider: 'gmail',
+      accountEmail: 'user@gmail.com',
+      username: 'user@gmail.com',
+    });
+    nativeMail.search.mockRejectedValue(new Error('Network request failed'));
+
+    const result = await new MailSearchEngine(async () => 'app-password').execute(
+      {
+        query: 'receipt',
+      },
+    );
+
+    expect(result.type).toBe('error');
+    if (result.type === 'error') {
+      expect(result.errorMessage).toContain('Could not reach the mail server');
+    }
   });
 
   it('checks configured mail bridge capabilities', async () => {

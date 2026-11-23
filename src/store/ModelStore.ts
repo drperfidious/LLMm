@@ -58,7 +58,6 @@ const AUTO_RELEASE_POLICY_VERSION = 1;
 const MODEL_INIT_PROFILE_VERSION = 1;
 const IOS_BOUNDARY_MODEL_PARAMS = 6_000_000_000;
 const IOS_BOUNDARY_MODEL_SIZE_BYTES = 2_000_000_000;
-const IOS_BOUNDARY_BATCH_CAP = 128;
 const METAL_LOAD_GUARD_KEY = 'llmm:pending-metal-load';
 
 type MetalLoadAttempt = {
@@ -114,6 +113,20 @@ export type ModelInitProfile = {
   source: ModelInitProfileSource;
 };
 
+export type NativeBackendSnapshot = {
+  modelId: string;
+  modelName?: string;
+  loadedAt: string;
+  initMs: number;
+  requestedBackend: 'cpu' | 'metal' | 'gpu' | 'auto';
+  effectiveBackend: 'cpu' | 'metal' | 'gpu' | 'unknown';
+  gpu: boolean;
+  devices: string[];
+  reasonNoGPU?: string;
+  initSettings: Omit<ContextParams, 'model'>;
+  systemInfo?: string;
+};
+
 import {ErrorState, createErrorState} from '../utils/errors';
 import {chatSessionRepository} from '../repositories/ChatSessionRepository';
 import {hasEnoughMemory} from '../hooks/useMemoryCheck';
@@ -137,12 +150,163 @@ import {
   applyIOSMetalSafetyPolicy,
   isIOSMetalRequested,
 } from '../utils/iosMetalPolicy';
+import {isIOSMetalDeviceName} from '../utils/deviceSelection';
 
 function positiveIntegerOrFallback(value: unknown, fallback: number): number {
   const numeric = Number(value);
   return Number.isFinite(numeric) && numeric > 0
     ? Math.floor(numeric)
     : fallback;
+}
+
+function getRequestedBackend(
+  params: Omit<ContextParams, 'model'>,
+): NativeBackendSnapshot['requestedBackend'] {
+  if (
+    (params as any).no_gpu_devices === true ||
+    (params.devices ?? []).some(device => device.toLowerCase() === 'cpu') ||
+    (params.n_gpu_layers ?? 0) <= 0
+  ) {
+    return 'cpu';
+  }
+
+  if (Platform.OS === 'ios') {
+    return 'metal';
+  }
+
+  if ((params.devices ?? []).length > 0) {
+    return 'gpu';
+  }
+
+  return 'auto';
+}
+
+function getEffectiveBackend(
+  gpu: boolean,
+  devices: string[],
+): NativeBackendSnapshot['effectiveBackend'] {
+  if (!gpu) {
+    return 'cpu';
+  }
+
+  if (Platform.OS === 'ios' || devices.some(isIOSMetalDeviceName)) {
+    return 'metal';
+  }
+
+  if (devices.length > 0) {
+    return 'gpu';
+  }
+
+  return 'unknown';
+}
+
+function createNativeBackendSnapshot(
+  ctx: LlamaContext,
+  model: Model,
+  initSettings: Omit<ContextParams, 'model'>,
+  initMs: number,
+): NativeBackendSnapshot {
+  const nativeContext = ctx as LlamaContext & {
+    gpu?: boolean;
+    devices?: string[];
+    reasonNoGPU?: string;
+    systemInfo?: string;
+  };
+  const gpu = nativeContext.gpu === true;
+  const devices = Array.isArray(nativeContext.devices)
+    ? nativeContext.devices.filter(device => typeof device === 'string')
+    : [];
+  const reasonNoGPU =
+    typeof nativeContext.reasonNoGPU === 'string' &&
+    nativeContext.reasonNoGPU.length > 0
+      ? nativeContext.reasonNoGPU
+      : undefined;
+
+  return {
+    modelId: model.id,
+    modelName: model.name,
+    loadedAt: new Date().toISOString(),
+    initMs,
+    requestedBackend: getRequestedBackend(initSettings),
+    effectiveBackend: getEffectiveBackend(gpu, devices),
+    gpu,
+    devices,
+    reasonNoGPU,
+    initSettings,
+    systemInfo:
+      typeof nativeContext.systemInfo === 'string'
+        ? nativeContext.systemInfo
+        : undefined,
+  };
+}
+
+const ACTIVE_CONTEXT_COMPARE_KEYS = [
+  'n_ctx',
+  'n_batch',
+  'n_ubatch',
+  'n_threads',
+  'cache_type_k',
+  'cache_type_v',
+  'n_gpu_layers',
+  'use_mlock',
+  'use_mmap',
+  'flash_attn_type',
+  'kv_unified',
+  'n_parallel',
+  'image_max_tokens',
+  'no_extra_bufts',
+  'warmup',
+  'no_gpu_devices',
+] as const;
+
+function normalizeContextCompareValue(value: unknown): unknown {
+  if (Array.isArray(value)) {
+    return value.map(item => String(item));
+  }
+  if (value === undefined) {
+    return null;
+  }
+  return value;
+}
+
+function contextSettingsMatch(
+  current: Partial<ContextInitParams> | undefined,
+  desired: Partial<ContextInitParams>,
+): boolean {
+  if (!current) {
+    return false;
+  }
+
+  for (const key of ACTIVE_CONTEXT_COMPARE_KEYS) {
+    if (
+      normalizeContextCompareValue((current as any)[key]) !==
+      normalizeContextCompareValue((desired as any)[key])
+    ) {
+      return false;
+    }
+  }
+
+  return (
+    JSON.stringify(normalizeContextCompareValue((current as any).devices)) ===
+    JSON.stringify(normalizeContextCompareValue((desired as any).devices))
+  );
+}
+
+function normalizeNativeInitDevices(
+  params: Partial<Omit<ContextParams, 'model'>>,
+): Partial<Omit<ContextParams, 'model'>> {
+  if (
+    Platform.OS === 'ios' &&
+    Array.isArray(params.devices) &&
+    params.devices.length === 1 &&
+    params.devices[0].toLowerCase() === 'metal'
+  ) {
+    const normalized = {...params};
+    delete normalized.devices;
+    return normalized;
+  }
+
+  return params;
 }
 
 function getModelContextLimit(model?: Model): number | undefined {
@@ -160,6 +324,21 @@ function isIOSBoundaryModel(model?: Model): boolean {
     (model.params ?? 0) >= IOS_BOUNDARY_MODEL_PARAMS ||
     (model.size ?? 0) >= IOS_BOUNDARY_MODEL_SIZE_BYTES
   );
+}
+
+function getIOSMetalDynamicBatchTarget(model?: Model): number {
+  const size = model?.size ?? 0;
+  const params = model?.params ?? 0;
+
+  if (params >= 6_000_000_000 || size >= 2_000_000_000) {
+    return 256;
+  }
+
+  if (params >= 3_000_000_000 || size >= 1_500_000_000) {
+    return 384;
+  }
+
+  return 512;
 }
 
 function cloneContextInitParams(params: ContextInitParams): ContextInitParams {
@@ -226,6 +405,7 @@ class ModelStore {
   appState: AppStateStatus = AppState.currentState;
   useAutoRelease: boolean = false;
   allowUnsafeContextLimits: boolean = false;
+  dynamicMetalBatchTuning: boolean = false;
   autoReleasePolicyVersion: number = 0;
   // UI loading state - true during model load/release transitions
   isContextLoading: boolean = false;
@@ -248,6 +428,7 @@ class ModelStore {
 
   // Track initialization settings for the active context
   activeContextSettings: ContextInitParams | undefined = undefined;
+  lastNativeBackendSnapshot: NativeBackendSnapshot | undefined = undefined;
 
   context: LlamaContext | undefined = undefined;
 
@@ -316,6 +497,7 @@ class ModelStore {
         'rulesVersion',
         'useAutoRelease',
         'allowUnsafeContextLimits',
+        'dynamicMetalBatchTuning',
         'autoReleasePolicyVersion',
         'contextInitParams',
         'requestedContextSize',
@@ -326,6 +508,7 @@ class ModelStore {
         'availableMemoryCeiling',
         'largestSuccessfulLoad',
         'metalLoadFailures',
+        'lastNativeBackendSnapshot',
       ],
       storage: AsyncStorage,
     }).then(async () => {
@@ -567,6 +750,22 @@ class ModelStore {
     await this.clearMetalLoadAttempt();
   }
 
+  private clearMetalLoadFailureRecord(model: Model) {
+    if (Platform.OS !== 'ios') {
+      return;
+    }
+
+    const failureKey = this.getMetalFailureKey(model.id);
+    if (this.metalLoadFailures[failureKey] === undefined) {
+      return;
+    }
+
+    runInAction(() => {
+      const {[failureKey]: _cleared, ...remaining} = this.metalLoadFailures;
+      this.metalLoadFailures = remaining;
+    });
+  }
+
   private async applyIOSMetalSafetyParams(
     params: Partial<Omit<ContextParams, 'model'>>,
     model?: Model,
@@ -602,12 +801,45 @@ class ModelStore {
     });
 
     if (decision.applied) {
-      console.warn(
+      const log =
+        decision.logLevel === 'info'
+          ? console.info.bind(console)
+          : console.warn.bind(console);
+      log(
         `[ModelStore] iOS Metal safety adjusted n_gpu_layers ${decision.requestedGpuLayers} -> ${decision.effectiveGpuLayers} for "${model?.name ?? model?.id ?? 'unknown model'}": ${decision.reason}`,
       );
     }
 
     return decision.params;
+  }
+
+  private async shouldReuseActiveContext(model: Model): Promise<boolean> {
+    if (this.activeModelId !== model.id || !this.context) {
+      return false;
+    }
+
+    const filePath = await this.getModelFullPath(model);
+    if (!filePath || !this.activeContextSettings) {
+      return false;
+    }
+
+    const effectiveSettings = await this.getEffectiveContextInitParams(
+      filePath,
+      model,
+    );
+    const desiredSettings = createContextInitParams(effectiveSettings);
+    const reusable = contextSettingsMatch(
+      this.activeContextSettings,
+      desiredSettings,
+    );
+
+    if (!reusable) {
+      console.log(
+        `[ModelStore] Reloading "${model.name}" because the start profile changed since the active context was initialized`,
+      );
+    }
+
+    return reusable;
   }
 
   private isProfileEligibleModelId(modelId?: string): modelId is string {
@@ -756,7 +988,11 @@ class ModelStore {
       const {[modelId]: _removed, ...remaining} = this.modelInitProfiles;
       this.modelInitProfiles = remaining;
       this.modelInitProfileRevision += 1;
-      if (this.activeModelId === modelId) {
+      const shouldResetLiveProfile =
+        this.activeModelId === modelId ||
+        (!this.activeModelId && this.contextInitParamsOwnerModelId === modelId);
+
+      if (shouldResetLiveProfile) {
         this.contextInitParams = this.createInitialModelInitProfileSettings();
         this.requestedContextSize = this.contextInitParams.n_ctx;
         this.allowUnsafeContextLimits = false;
@@ -831,7 +1067,10 @@ class ModelStore {
       };
       this.modelInitProfileRevision += 1;
 
-      if (this.activeModelId === modelId) {
+      const shouldHydrateLiveProfile =
+        this.activeModelId === modelId || !this.activeModelId;
+
+      if (shouldHydrateLiveProfile) {
         this.contextInitParams = normalizedProfile.settings;
         this.requestedContextSize = normalizedProfile.requestedContextSize;
         this.allowUnsafeContextLimits = allowUnsafeContextLimits;
@@ -850,8 +1089,8 @@ class ModelStore {
     const previousModelId = this.activeModelId ?? this.lastUsedModelId;
     if (
       previousModelId &&
-      (!this.contextInitParamsOwnerModelId ||
-        this.contextInitParamsOwnerModelId === previousModelId)
+      previousModelId !== model.id &&
+      this.contextInitParamsOwnerModelId === previousModelId
     ) {
       this.saveModelInitProfile(previousModelId, 'manual');
     }
@@ -902,15 +1141,15 @@ class ModelStore {
     }));
   };
 
-  setCacheTypeK = (cache_type: CacheType) => {
-    // Only allow changing cache type if flash attention is enabled.
-    // Support both old flash_attn and new flash_attn_type.
-    const flashAttnEnabled =
+  private isFlashAttnEnabledForCacheTypes = () =>
+    Boolean(
       this.contextInitParams.flash_attn ||
-      (this.contextInitParams.flash_attn_type &&
-        this.contextInitParams.flash_attn_type !== 'off');
+        (this.contextInitParams.flash_attn_type &&
+          this.contextInitParams.flash_attn_type !== 'off'),
+    );
 
-    if (flashAttnEnabled) {
+  setCacheTypeK = (cache_type: CacheType) => {
+    if (this.isFlashAttnEnabledForCacheTypes()) {
       this.updateContextInitParams(current => ({
         ...current,
         cache_type_k: cache_type,
@@ -919,17 +1158,20 @@ class ModelStore {
   };
 
   setCacheTypeV = (cache_type: CacheType) => {
-    // Only allow changing cache type if flash attention is enabled.
-    // Support both old flash_attn and new flash_attn_type.
-    const flashAttnEnabled =
-      this.contextInitParams.flash_attn ||
-      (this.contextInitParams.flash_attn_type &&
-        this.contextInitParams.flash_attn_type !== 'off');
-
-    if (flashAttnEnabled) {
+    if (this.isFlashAttnEnabledForCacheTypes()) {
       this.updateContextInitParams(current => ({
         ...current,
         cache_type_v: cache_type,
+      }));
+    }
+  };
+
+  setCacheTypes = (cache_type_k: CacheType, cache_type_v: CacheType) => {
+    if (this.isFlashAttnEnabledForCacheTypes()) {
+      this.updateContextInitParams(current => ({
+        ...current,
+        cache_type_k,
+        cache_type_v,
       }));
     }
   };
@@ -1086,16 +1328,37 @@ class ModelStore {
       );
     }
 
-    const effectiveBatch = Math.min(
+    const cpuOnly =
+      this.contextInitParams.no_gpu_devices === true ||
+      this.contextInitParams.devices?.some(
+        device => device.toLowerCase() === 'cpu',
+      ) === true;
+
+    let effectiveBatch = Math.min(
       positiveIntegerOrFallback(this.contextInitParams.n_batch, 512),
       effectiveContext,
-      boundaryModel ? IOS_BOUNDARY_BATCH_CAP : effectiveContext,
     );
-    const effectiveUBatch = Math.min(
+    let effectiveUBatch = Math.min(
       positiveIntegerOrFallback(this.contextInitParams.n_ubatch, 512),
       effectiveBatch,
-      boundaryModel ? IOS_BOUNDARY_BATCH_CAP : effectiveBatch,
     );
+
+    const metalRequested =
+      Platform.OS === 'ios' &&
+      !cpuOnly &&
+      positiveIntegerOrFallback(this.contextInitParams.n_gpu_layers, 0) > 0;
+
+    if (this.dynamicMetalBatchTuning && metalRequested) {
+      const targetBatch = getIOSMetalDynamicBatchTarget(model);
+      effectiveBatch = Math.min(
+        Math.max(effectiveBatch, targetBatch),
+        effectiveContext,
+      );
+      effectiveUBatch = Math.min(
+        Math.max(effectiveUBatch, targetBatch),
+        effectiveBatch,
+      );
+    }
 
     // Resolve the effective use_mmap value based on the setting
     const currentUseMmap = this.contextInitParams.use_mmap as unknown;
@@ -1131,12 +1394,6 @@ class ModelStore {
       this.contextInitParams.flash_attn_type ??
       (Platform.OS === 'ios' ? 'auto' : 'off');
 
-    const cpuOnly =
-      this.contextInitParams.no_gpu_devices === true ||
-      this.contextInitParams.devices?.some(
-        device => device.toLowerCase() === 'cpu',
-      ) === true;
-
     // Build the params object, filtering out undefined values
     let params: Partial<Omit<ContextParams, 'model'>> = {
       n_ctx: effectiveContext,
@@ -1152,13 +1409,12 @@ class ModelStore {
       n_parallel: this.contextInitParams.n_parallel ?? 1, // NEW (1 for blocking mode only)
       use_mlock: boundaryModel ? false : this.contextInitParams.use_mlock,
       use_mmap: effectiveUseMmap,
-      no_extra_bufts: boundaryModel
-        ? true
-        : this.contextInitParams.no_extra_bufts,
-      warmup: boundaryModel ? false : this.contextInitParams.warmup,
+      no_extra_bufts: this.contextInitParams.no_extra_bufts,
+      warmup: this.contextInitParams.warmup,
     };
 
     params = await this.applyIOSMetalSafetyParams(params, model);
+    params = normalizeNativeInitDevices(params);
 
     // Remove undefined values from the params object
     return Object.fromEntries(
@@ -2456,10 +2712,14 @@ class ModelStore {
 
         // Skip if already loaded
         if (this.activeModelId === model.id && this.context) {
-          console.log(
-            `[ModelStore] Model "${model.name}" is already loaded, skipping`,
-          );
-          return this.context;
+          const canReuseActiveContext =
+            await this.shouldReuseActiveContext(model);
+          if (canReuseActiveContext) {
+            console.log(
+              `[ModelStore] Model "${model.name}" is already loaded with the current start profile, skipping`,
+            );
+            return this.context;
+          }
         }
 
         // Release existing context
@@ -2539,8 +2799,19 @@ class ModelStore {
       );
       const t1 = Date.now();
       console.log('init time: ', t1 - t0);
+      const nativeBackendSnapshot = createNativeBackendSnapshot(
+        ctx,
+        model,
+        effectiveSettings,
+        t1 - t0,
+      );
+      console.log(
+        '[ModelStore] native backend snapshot:',
+        JSON.stringify(nativeBackendSnapshot),
+      );
       if (metalLoadGuardActive) {
         await this.clearMetalLoadAttempt();
+        this.clearMetalLoadFailureRecord(model);
         metalLoadGuardActive = false;
       }
 
@@ -2591,6 +2862,7 @@ class ModelStore {
         this.context = ctx;
         this.engine = new LocalCompletionEngine(ctx);
         this.activeContextSettings = contextInitParams;
+        this.lastNativeBackendSnapshot = nativeBackendSnapshot;
         this.setActiveModel(model.id);
         this.contextInitParamsOwnerModelId = model.id;
         this.assignModelInitProfile(
@@ -2672,6 +2944,7 @@ class ModelStore {
         }
         runInAction(() => {
           this.engine = undefined;
+          this.lastNativeBackendSnapshot = undefined;
           if (clearActiveModel) {
             this.activeModelId = undefined;
           }
@@ -2756,6 +3029,7 @@ class ModelStore {
         this.context = undefined;
         this.engine = undefined;
         this.activeContextSettings = undefined;
+        this.lastNativeBackendSnapshot = undefined;
         // Ensure multimodal state is cleared even if something went wrong above
         this.isMultimodalActive = false;
         this.activeProjectionModelId = undefined;
@@ -2874,8 +3148,7 @@ class ModelStore {
     const previousModelId = this.activeModelId ?? this.lastUsedModelId;
     if (
       previousModelId &&
-      (!this.contextInitParamsOwnerModelId ||
-        this.contextInitParamsOwnerModelId === previousModelId)
+      this.contextInitParamsOwnerModelId === previousModelId
     ) {
       this.saveModelInitProfile(previousModelId);
     }
@@ -3346,6 +3619,12 @@ class ModelStore {
     runInAction(() => {
       this.useAutoRelease = useAutoRelease;
       this.autoReleasePolicyVersion = AUTO_RELEASE_POLICY_VERSION;
+    });
+  };
+
+  updateDynamicMetalBatchTuning = (dynamicMetalBatchTuning: boolean) => {
+    runInAction(() => {
+      this.dynamicMetalBatchTuning = dynamicMetalBatchTuning;
     });
   };
 

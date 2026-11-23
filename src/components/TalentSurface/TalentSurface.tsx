@@ -5,6 +5,7 @@ import {AgentStep} from '../../utils/types';
 
 import {ToolErrorBlock} from '../ToolErrorBlock';
 import {ToolMetricsFooter} from '../ToolMetricsFooter';
+import {ToolTraceDisclosure} from '../ToolTraceDisclosure';
 import {ToolUsedChip} from '../ToolUsedChip';
 
 interface TalentSurfaceProps {
@@ -56,6 +57,7 @@ export const TalentSurface: React.FC<TalentSurfaceProps> = ({step}) => {
             toolName={name}
             errorMessage={outcome.result.errorMessage}
           />
+          <ToolTraceDisclosure call={call} outcome={outcome} />
         </React.Fragment>,
       );
       continue;
@@ -74,6 +76,7 @@ export const TalentSurface: React.FC<TalentSurfaceProps> = ({step}) => {
           <React.Fragment key={call.id}>
             {node}
             {call.metrics && <ToolMetricsFooter metrics={call.metrics} />}
+            <ToolTraceDisclosure call={call} outcome={outcome} />
           </React.Fragment>,
         );
         continue;
@@ -86,6 +89,7 @@ export const TalentSurface: React.FC<TalentSurfaceProps> = ({step}) => {
     rendered.push(
       <React.Fragment key={call.id}>
         <ToolUsedChip toolName={name} metrics={call.metrics} />
+        <ToolTraceDisclosure call={call} outcome={outcome} />
       </React.Fragment>,
     );
   }

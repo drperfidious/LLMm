@@ -1,4 +1,4 @@
-import React, {useState, useEffect, memo, useContext} from 'react';
+import React, {useState, useEffect, useContext} from 'react';
 import {
   Button,
   Text,
@@ -19,6 +19,7 @@ import {chatTemplates} from '../../utils/chat';
 import {styles} from './styles';
 import {View} from 'react-native';
 import {L10nContext} from '../../utils';
+import {observer} from 'mobx-react-lite';
 
 const CACHE_TYPES = Object.values(CacheType);
 const PROFILE_NUMBER_KEYS = [
@@ -78,17 +79,29 @@ function resolveProfileNumberDrafts(
   );
 }
 
-export const ModelSettingsSheet: React.FC<ModelSettingsSheetProps> = memo(
+function resolveLiveModel(model: Model | undefined): Model | undefined {
+  if (!model) {
+    return undefined;
+  }
+  return (
+    modelStore.models.find(candidate => candidate.id === model.id) ??
+    modelStore.remoteModels?.find(candidate => candidate.id === model.id) ??
+    model
+  );
+}
+
+export const ModelSettingsSheet: React.FC<ModelSettingsSheetProps> = observer(
   ({isVisible, onClose, model}) => {
-    const [tempModelName, setTempModelName] = useState(model?.name || '');
+    const liveModel = resolveLiveModel(model);
+    const [tempModelName, setTempModelName] = useState(liveModel?.name || '');
     const [tempChatTemplate, setTempChatTemplate] = useState(
-      model?.chatTemplate || chatTemplates.default,
+      liveModel?.chatTemplate || chatTemplates.default,
     );
     const [tempStopWords, setTempStopWords] = useState<string[]>(
-      model?.stopWords || [],
+      liveModel?.stopWords || [],
     );
-    const initialProfile = model
-      ? modelStore.getModelInitProfileDraft(model.id)
+    const initialProfile = liveModel
+      ? modelStore.getModelInitProfileDraft(liveModel.id)
       : undefined;
     const [tempProfileSettings, setTempProfileSettings] =
       useState<ContextInitParams>(
@@ -102,17 +115,17 @@ export const ModelSettingsSheet: React.FC<ModelSettingsSheetProps> = memo(
       );
     const l10n = useContext(L10nContext);
 
-    // Reset temp settings when model changes
+    // Reset temp settings when the sheet opens or the saved profile changes.
     useEffect(() => {
-      if (model) {
-        setTempModelName(model.name);
-        setTempChatTemplate(model.chatTemplate);
-        setTempStopWords(model.stopWords || []);
-        const profile = modelStore.getModelInitProfileDraft(model.id);
+      if (isVisible && liveModel) {
+        setTempModelName(liveModel.name);
+        setTempChatTemplate(liveModel.chatTemplate);
+        setTempStopWords(liveModel.stopWords || []);
+        const profile = modelStore.getModelInitProfileDraft(liveModel.id);
         setTempProfileSettings(profile.settings);
         setProfileNumberDrafts(getProfileNumberDrafts(profile.settings));
       }
-    }, [model]);
+    }, [isVisible, liveModel, modelStore.modelInitProfileRevision]);
 
     const updateProfileSetting = <K extends keyof ContextInitParams>(
       key: K,
@@ -172,6 +185,7 @@ export const ModelSettingsSheet: React.FC<ModelSettingsSheetProps> = memo(
           {CACHE_TYPES.map(type => (
             <Button
               key={type}
+              testID={`${testID}-${type}`}
               compact
               mode={
                 tempProfileSettings[field] === type ? 'contained' : 'outlined'
@@ -197,34 +211,39 @@ export const ModelSettingsSheet: React.FC<ModelSettingsSheetProps> = memo(
     };
 
     const handleSaveSettings = () => {
-      if (model) {
-        modelStore.updateModelName(model.id, tempModelName);
-        modelStore.updateModelChatTemplate(model.id, tempChatTemplate);
-        modelStore.updateModelStopWords(model.id, tempStopWords);
-        if (model.origin !== ModelOrigin.REMOTE) {
+      if (liveModel) {
+        modelStore.updateModelName(liveModel.id, tempModelName);
+        modelStore.updateModelChatTemplate(liveModel.id, tempChatTemplate);
+        modelStore.updateModelStopWords(liveModel.id, tempStopWords);
+        if (liveModel.origin !== ModelOrigin.REMOTE) {
           const resolvedProfileSettings = resolveProfileNumberDrafts(
             tempProfileSettings,
             profileNumberDrafts,
           );
-          modelStore.saveModelInitProfileSettings(
-            model.id,
+          const saved = modelStore.saveModelInitProfileSettings(
+            liveModel.id,
             resolvedProfileSettings,
             true,
             'manual',
             resolvedProfileSettings.n_ctx,
           );
+          if (!saved) {
+            console.warn(
+              `[ModelSettingsSheet] Failed to save load profile for model "${liveModel.name}" (${liveModel.id})`,
+            );
+          }
         }
         onClose();
       }
     };
 
     const handleCancelSettings = () => {
-      if (model) {
+      if (liveModel) {
         // Reset to store values
-        setTempModelName(model.name);
-        setTempChatTemplate(model.chatTemplate);
-        setTempStopWords(model.stopWords || []);
-        const profile = modelStore.getModelInitProfileDraft(model.id);
+        setTempModelName(liveModel.name);
+        setTempChatTemplate(liveModel.chatTemplate);
+        setTempStopWords(liveModel.stopWords || []);
+        const profile = modelStore.getModelInitProfileDraft(liveModel.id);
         setTempProfileSettings(profile.settings);
         setProfileNumberDrafts(getProfileNumberDrafts(profile.settings));
       }
@@ -232,22 +251,22 @@ export const ModelSettingsSheet: React.FC<ModelSettingsSheetProps> = memo(
     };
 
     const handleReset = () => {
-      if (model) {
+      if (liveModel) {
         // Reset to model default values
-        modelStore.resetModelName(model.id);
-        modelStore.resetModelChatTemplate(model.id);
-        modelStore.resetModelStopWords(model.id);
-        modelStore.clearModelInitProfile(model.id);
-        setTempModelName(model.name);
-        setTempChatTemplate(model.chatTemplate);
-        setTempStopWords(model.stopWords || []);
-        const profile = modelStore.getModelInitProfileDraft(model.id);
+        modelStore.resetModelName(liveModel.id);
+        modelStore.resetModelChatTemplate(liveModel.id);
+        modelStore.resetModelStopWords(liveModel.id);
+        modelStore.clearModelInitProfile(liveModel.id);
+        setTempModelName(liveModel.name);
+        setTempChatTemplate(liveModel.chatTemplate);
+        setTempStopWords(liveModel.stopWords || []);
+        const profile = modelStore.getModelInitProfileDraft(liveModel.id);
         setTempProfileSettings(profile.settings);
         setProfileNumberDrafts(getProfileNumberDrafts(profile.settings));
       }
     };
 
-    if (!model) {
+    if (!liveModel) {
       return null;
     }
 
@@ -269,7 +288,7 @@ export const ModelSettingsSheet: React.FC<ModelSettingsSheetProps> = memo(
             onModelNameChange={handleModelNameChange}
           />
 
-          {model.origin !== ModelOrigin.REMOTE && (
+          {liveModel.origin !== ModelOrigin.REMOTE && (
             <>
               <Divider style={styles.multimodalDivider} />
               <Text style={styles.multimodalSectionTitle}>Load profile</Text>
@@ -372,17 +391,17 @@ export const ModelSettingsSheet: React.FC<ModelSettingsSheetProps> = memo(
           )}
 
           {/* Multimodal Settings Section */}
-          {model.supportsMultimodal && (
+          {liveModel.supportsMultimodal && (
             <>
               <Divider style={styles.multimodalDivider} />
               <Text style={styles.multimodalSectionTitle}>
                 {l10n.models.multimodal.settings}
               </Text>
               <ProjectionModelSelector
-                model={model}
+                model={liveModel}
                 onProjectionModelSelect={projectionModelId => {
                   modelStore.setDefaultProjectionModel(
-                    model.id,
+                    liveModel.id,
                     projectionModelId,
                   );
                 }}

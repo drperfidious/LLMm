@@ -55,8 +55,14 @@ export type NativeCreateReminderArgs = {
 
 type NativeAppleOrganizerModule = {
   getAuthorizationStatus(): Promise<NativeOrganizerAccess>;
-  requestCalendarAccess(): Promise<{granted: boolean; status: NativeAccessStatus}>;
-  requestReminderAccess(): Promise<{granted: boolean; status: NativeAccessStatus}>;
+  requestCalendarAccess(): Promise<{
+    granted: boolean;
+    status: NativeAccessStatus;
+  }>;
+  requestReminderAccess(): Promise<{
+    granted: boolean;
+    status: NativeAccessStatus;
+  }>;
   findEvents(
     query: string,
     startISO: string,
@@ -71,6 +77,9 @@ type NativeAppleOrganizerModule = {
   ): Promise<NativeReminder[]>;
   createReminder(args: NativeCreateReminderArgs): Promise<NativeReminder>;
   completeReminder(identifier: string): Promise<NativeReminder>;
+  deleteReminder(
+    identifier: string,
+  ): Promise<NativeReminder & {deleted?: boolean}>;
 };
 
 function getModule(): NativeAppleOrganizerModule {
@@ -78,7 +87,9 @@ function getModule(): NativeAppleOrganizerModule {
     | NativeAppleOrganizerModule
     | undefined;
   if (Platform.OS !== 'ios' || !module) {
-    throw new Error('Apple calendar/reminder talents are available on iOS only.');
+    throw new Error(
+      'Apple calendar/reminder talents are available on iOS only.',
+    );
   }
   return module;
 }
@@ -129,5 +140,11 @@ export const nativeAppleOrganizer = {
 
   completeReminder(identifier: string): Promise<NativeReminder> {
     return getModule().completeReminder(identifier);
+  },
+
+  deleteReminder(
+    identifier: string,
+  ): Promise<NativeReminder & {deleted?: boolean}> {
+    return getModule().deleteReminder(identifier);
   },
 };

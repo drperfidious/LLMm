@@ -385,7 +385,7 @@ index a775611..bf93b11 100644
                  n_tasks = n_threads;
              } break;
 diff --git a/node_modules/llama.rn/cpp/ggml-cpu/ops.cpp b/node_modules/llama.rn/cpp/ggml-cpu/ops.cpp
-index b1752d8..0bd1f89 100644
+index b1752d8..3f9b24c 100644
 --- a/node_modules/llama.rn/cpp/ggml-cpu/ops.cpp
 +++ b/node_modules/llama.rn/cpp/ggml-cpu/ops.cpp
 @@ -665,6 +665,7 @@ void lm_ggml_compute_forward_add(
@@ -450,31 +450,7 @@ index b1752d8..0bd1f89 100644
          case LM_GGML_TYPE_Q4_0:
          case LM_GGML_TYPE_Q4_1:
          case LM_GGML_TYPE_Q5_0:
-@@ -4657,6 +4670,7 @@ void lm_ggml_compute_forward_set(
-         case LM_GGML_TYPE_F16:
-         case LM_GGML_TYPE_BF16:
-         case LM_GGML_TYPE_Q1_0:
-+        case LM_GGML_TYPE_Q2_0:
-         case LM_GGML_TYPE_Q4_0:
-         case LM_GGML_TYPE_Q4_1:
-         case LM_GGML_TYPE_Q5_0:
-@@ -4881,6 +4895,7 @@ void lm_ggml_compute_forward_get_rows(
- 
-     switch (src0->type) {
-         case LM_GGML_TYPE_Q1_0:
-+        case LM_GGML_TYPE_Q2_0:
-         case LM_GGML_TYPE_Q4_0:
-         case LM_GGML_TYPE_Q4_1:
-         case LM_GGML_TYPE_Q5_0:
-@@ -5607,6 +5622,7 @@ void lm_ggml_compute_forward_clamp(
-             } break;
-         case LM_GGML_TYPE_BF16:
-         case LM_GGML_TYPE_Q1_0:
-+        case LM_GGML_TYPE_Q2_0:
-         case LM_GGML_TYPE_Q4_0:
-         case LM_GGML_TYPE_Q4_1:
-         case LM_GGML_TYPE_Q5_0:
-@@ -5622,6 +5638,9 @@ void lm_ggml_compute_forward_clamp(
+@@ -4395,6 +4408,9 @@ void lm_ggml_compute_forward_out_prod(
          case LM_GGML_TYPE_Q6_K:
          case LM_GGML_TYPE_TQ1_0:
          case LM_GGML_TYPE_TQ2_0:
@@ -484,7 +460,61 @@ index b1752d8..0bd1f89 100644
          case LM_GGML_TYPE_IQ2_XXS:
          case LM_GGML_TYPE_IQ2_XS:
          case LM_GGML_TYPE_IQ3_XXS:
-@@ -10686,6 +10705,109 @@ void lm_ggml_compute_forward_gated_delta_net(
+@@ -4657,6 +4673,7 @@ void lm_ggml_compute_forward_set(
+         case LM_GGML_TYPE_F16:
+         case LM_GGML_TYPE_BF16:
+         case LM_GGML_TYPE_Q1_0:
++        case LM_GGML_TYPE_Q2_0:
+         case LM_GGML_TYPE_Q4_0:
+         case LM_GGML_TYPE_Q4_1:
+         case LM_GGML_TYPE_Q5_0:
+@@ -4672,6 +4689,9 @@ void lm_ggml_compute_forward_set(
+         case LM_GGML_TYPE_Q6_K:
+         case LM_GGML_TYPE_TQ1_0:
+         case LM_GGML_TYPE_TQ2_0:
++        case LM_GGML_TYPE_TURBO2_0:
++        case LM_GGML_TYPE_TURBO3_0:
++        case LM_GGML_TYPE_TURBO4_0:
+         case LM_GGML_TYPE_IQ2_XXS:
+         case LM_GGML_TYPE_IQ2_XS:
+         case LM_GGML_TYPE_IQ3_XXS:
+@@ -4881,6 +4901,7 @@ void lm_ggml_compute_forward_get_rows(
+ 
+     switch (src0->type) {
+         case LM_GGML_TYPE_Q1_0:
++        case LM_GGML_TYPE_Q2_0:
+         case LM_GGML_TYPE_Q4_0:
+         case LM_GGML_TYPE_Q4_1:
+         case LM_GGML_TYPE_Q5_0:
+@@ -4896,6 +4917,9 @@ void lm_ggml_compute_forward_get_rows(
+         case LM_GGML_TYPE_Q6_K:
+         case LM_GGML_TYPE_TQ1_0:
+         case LM_GGML_TYPE_TQ2_0:
++        case LM_GGML_TYPE_TURBO2_0:
++        case LM_GGML_TYPE_TURBO3_0:
++        case LM_GGML_TYPE_TURBO4_0:
+         case LM_GGML_TYPE_IQ2_XXS:
+         case LM_GGML_TYPE_IQ2_XS:
+         case LM_GGML_TYPE_IQ3_XXS:
+@@ -5607,6 +5631,7 @@ void lm_ggml_compute_forward_clamp(
+             } break;
+         case LM_GGML_TYPE_BF16:
+         case LM_GGML_TYPE_Q1_0:
++        case LM_GGML_TYPE_Q2_0:
+         case LM_GGML_TYPE_Q4_0:
+         case LM_GGML_TYPE_Q4_1:
+         case LM_GGML_TYPE_Q5_0:
+@@ -5622,6 +5647,9 @@ void lm_ggml_compute_forward_clamp(
+         case LM_GGML_TYPE_Q6_K:
+         case LM_GGML_TYPE_TQ1_0:
+         case LM_GGML_TYPE_TQ2_0:
++        case LM_GGML_TYPE_TURBO2_0:
++        case LM_GGML_TYPE_TURBO3_0:
++        case LM_GGML_TYPE_TURBO4_0:
+         case LM_GGML_TYPE_IQ2_XXS:
+         case LM_GGML_TYPE_IQ2_XS:
+         case LM_GGML_TYPE_IQ3_XXS:
+@@ -10686,6 +10714,109 @@ void lm_ggml_compute_forward_gated_delta_net(
      }
  }
  
@@ -857,7 +887,7 @@ index d1f80be..f73d477 100644
  struct lm_ggml_metal_pipeline_with_params lm_ggml_metal_library_get_pipeline_mul_mm            (lm_ggml_metal_library_t lib, const struct lm_ggml_tensor * op);
  struct lm_ggml_metal_pipeline_with_params lm_ggml_metal_library_get_pipeline_mul_mv            (lm_ggml_metal_library_t lib, const struct lm_ggml_tensor * op);
 diff --git a/node_modules/llama.rn/cpp/ggml-metal/ggml-metal-device.m b/node_modules/llama.rn/cpp/ggml-metal/ggml-metal-device.m
-index 39f3fc8..2f19c96 100644
+index 39f3fc8..f7a2e5a 100644
 --- a/node_modules/llama.rn/cpp/ggml-metal/ggml-metal-device.m
 +++ b/node_modules/llama.rn/cpp/ggml-metal/ggml-metal-device.m
 @@ -1159,12 +1159,31 @@ bool lm_ggml_metal_device_supports_op(lm_ggml_metal_device_t dev, const struct l
@@ -904,7 +934,7 @@ index 39f3fc8..2f19c96 100644
                      break;
                  case LM_GGML_TYPE_BF16:
                      if (!has_bfloat) {
-@@ -1192,6 +1214,8 @@ bool lm_ggml_metal_device_supports_op(lm_ggml_metal_device_t dev, const struct l
+@@ -1192,9 +1214,20 @@ bool lm_ggml_metal_device_supports_op(lm_ggml_metal_device_t dev, const struct l
              return true;
          case LM_GGML_OP_GATED_DELTA_NET:
              return has_simdgroup_reduction && op->src[2]->ne[0] % 32 == 0;
@@ -913,7 +943,19 @@ index 39f3fc8..2f19c96 100644
          case LM_GGML_OP_SOLVE_TRI:
          case LM_GGML_OP_MUL_MAT:
          case LM_GGML_OP_MUL_MAT_ID:
-@@ -1209,12 +1233,16 @@ bool lm_ggml_metal_device_supports_op(lm_ggml_metal_device_t dev, const struct l
++            if (op->src[0] && (op->src[0]->type == LM_GGML_TYPE_TURBO2_0 || op->src[0]->type == LM_GGML_TYPE_TURBO3_0 || op->src[0]->type == LM_GGML_TYPE_TURBO4_0)) {
++                return false;
++            }
++            if (op->src[1] && (op->src[1]->type == LM_GGML_TYPE_TURBO2_0 || op->src[1]->type == LM_GGML_TYPE_TURBO3_0 || op->src[1]->type == LM_GGML_TYPE_TURBO4_0)) {
++                return false;
++            }
++            if (op->src[2] && (op->src[2]->type == LM_GGML_TYPE_TURBO2_0 || op->src[2]->type == LM_GGML_TYPE_TURBO3_0 || op->src[2]->type == LM_GGML_TYPE_TURBO4_0)) {
++                return false;
++            }
+             return has_simdgroup_reduction && op->src[0]->type != LM_GGML_TYPE_NVFP4;
+         case LM_GGML_OP_SET:
+         case LM_GGML_OP_CPY:
+@@ -1209,12 +1242,16 @@ bool lm_ggml_metal_device_supports_op(lm_ggml_metal_device_t dev, const struct l
                             case LM_GGML_TYPE_BF16:
                             case LM_GGML_TYPE_Q8_0:
                             case LM_GGML_TYPE_Q1_0:
@@ -930,7 +972,7 @@ index 39f3fc8..2f19c96 100644
                                  return true;
                             default:
                                  return false;
-@@ -1236,11 +1264,14 @@ bool lm_ggml_metal_device_supports_op(lm_ggml_metal_device_t dev, const struct l
+@@ -1236,11 +1273,14 @@ bool lm_ggml_metal_device_supports_op(lm_ggml_metal_device_t dev, const struct l
                                  return false;
                          }
                      case LM_GGML_TYPE_Q1_0:
@@ -945,7 +987,7 @@ index 39f3fc8..2f19c96 100644
                          switch (op->type) {
                              case LM_GGML_TYPE_F32:
                              case LM_GGML_TYPE_F16:
-@@ -1267,11 +1298,15 @@ bool lm_ggml_metal_device_supports_op(lm_ggml_metal_device_t dev, const struct l
+@@ -1267,11 +1307,15 @@ bool lm_ggml_metal_device_supports_op(lm_ggml_metal_device_t dev, const struct l
                      case LM_GGML_TYPE_F16:
                      case LM_GGML_TYPE_BF16:
                      case LM_GGML_TYPE_Q8_0:

@@ -8,6 +8,7 @@ import {
 import {AboutScreen} from '../AboutScreen';
 import {submitFeedback} from '../../../api/feedback';
 import {openReportEmailDraft} from '../../../utils/reportEmail';
+import {getDonationProducts, purchaseDonation} from '../../../services/donations';
 import {l10n} from '../../../locales';
 
 const render = (ui: React.ReactElement, options: any = {}) =>
@@ -42,10 +43,28 @@ jest.mock('../../../utils/reportEmail', () => ({
   }),
 }));
 
+jest.mock('../../../services/donations', () => ({
+  getDonationProducts: jest.fn().mockResolvedValue([
+    {
+      id: 'com.randyduquette.llmm.tip.small',
+      displayName: 'Small Tip',
+      description: 'Support LLMm development',
+      displayPrice: '$1.99',
+      price: 1.99,
+    },
+  ]),
+  purchaseDonation: jest.fn().mockResolvedValue({
+    status: 'success',
+    productId: 'com.randyduquette.llmm.tip.small',
+    transactionId: 'test-transaction',
+  }),
+}));
+
 jest.spyOn(Alert, 'alert');
 
 describe('AboutScreen', () => {
   beforeEach(() => {
+    Platform.OS = 'android';
     jest.clearAllMocks();
   });
 
@@ -56,6 +75,8 @@ describe('AboutScreen', () => {
     expect(getByText('v1.0.0 (100)')).toBeTruthy();
     expect(getByText(l10n.en.about.supportProject)).toBeTruthy();
     expect(getByText(l10n.en.about.githubButton)).toBeTruthy();
+    expect(getByText(l10n.en.about.supportTitle)).toBeTruthy();
+    expect(getByText(l10n.en.about.feedbackTitle)).toBeTruthy();
   });
 
   it('copies version to clipboard when version button is pressed', () => {
@@ -90,11 +111,32 @@ describe('AboutScreen', () => {
     );
   });
 
-  it('does not show sponsor button on iOS', () => {
+  it('does not show sponsor button on iOS', async () => {
     Platform.OS = 'ios';
-    const {queryByText} = render(<AboutScreen />);
+    const {findByText, queryByText} = render(<AboutScreen />);
 
     expect(queryByText(l10n.en.about.sponsorButton)).toBeNull();
+    expect(queryByText(l10n.en.about.orBy)).toBeNull();
+    expect(await findByText('Tip $1.99')).toBeTruthy();
+  });
+
+  it('loads the App Store tip product on iOS and handles purchase success', async () => {
+    Platform.OS = 'ios';
+    const {findByText} = render(<AboutScreen />);
+
+    const tipButton = await findByText('Tip $1.99');
+    await act(async () => {
+      fireEvent.press(tipButton);
+    });
+
+    expect(getDonationProducts).toHaveBeenCalled();
+    expect(purchaseDonation).toHaveBeenCalledWith(
+      'com.randyduquette.llmm.tip.small',
+    );
+    expect(Alert.alert).toHaveBeenCalledWith(
+      l10n.en.about.tipThankYouTitle,
+      l10n.en.about.tipThankYouDescription,
+    );
   });
 
   it('opens feedback form when share thoughts button is pressed', async () => {

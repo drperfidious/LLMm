@@ -97,4 +97,27 @@ describe('DocumentsScreen', () => {
       );
     });
   });
+
+  it('creates folders from the document folder manager', async () => {
+    const {getByTestId, getByText} = render(<DocumentsScreen />);
+
+    await waitFor(() => {
+      expect(getByTestId('documents-row-/note.md')).toBeTruthy();
+    });
+
+    fireEvent.press(getByText('Manage folders'));
+    await waitFor(() => {
+      expect(getByTestId('documents-dir-manager')).toBeTruthy();
+    });
+
+    fireEvent.changeText(getByTestId('documents-folder-path'), 'projects/app');
+    fireEvent.press(getByTestId('documents-create-folder'));
+
+    await waitFor(() => {
+      expect(RNFS.mkdir).toHaveBeenCalledWith(
+        '/path/to/documents/llmm-workspace/projects/app',
+        {NSURLIsExcludedFromBackupKey: false},
+      );
+    });
+  });
 });

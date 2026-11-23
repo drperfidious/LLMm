@@ -37,6 +37,7 @@ import {
   ShareIcon,
   TrashIcon,
   UploadIcon,
+  PlusIcon,
 } from '../../assets/icons';
 import {MarkdownView} from '../../components/MarkdownView';
 import {TextInput} from '../../components';
@@ -51,7 +52,7 @@ import {
   WorkspaceEntry,
   formatBytes,
   formatDocumentForChat,
-  isTextLikeWorkspacePath,
+  isReadableWorkspacePath,
   languageForWorkspacePath,
   sanitizeWorkspaceFileName,
   workspaceFileSystem,
@@ -104,6 +105,7 @@ export const DocumentsScreen: React.FC = observer(() => {
   const {width} = useWindowDimensions();
 
   const [entries, setEntries] = useState<WorkspaceEntry[]>([]);
+  const [directories, setDirectories] = useState<WorkspaceEntry[]>([]);
   const [selectedPath, setSelectedPath] = useState<string | null>(null);
   const [preview, setPreview] = useState<PreviewState>({status: 'idle'});
   const [query, setQuery] = useState('');
@@ -112,14 +114,22 @@ export const DocumentsScreen: React.FC = observer(() => {
   const [isLoading, setIsLoading] = useState(false);
   const [isImporting, setIsImporting] = useState(false);
   const [isCreating, setIsCreating] = useState(false);
+  const [isManagingDirs, setIsManagingDirs] = useState(false);
   const [newNotePath, setNewNotePath] = useState(copy.defaultNoteName);
   const [newNoteBody, setNewNoteBody] = useState(copy.defaultNoteBody);
+  const [newDirectoryPath, setNewDirectoryPath] = useState(
+    copy.defaultFolderName,
+  );
 
   const reload = useCallback(async () => {
     setIsLoading(true);
     try {
-      const files = await workspaceFileSystem.listFiles();
+      const [files, folders] = await Promise.all([
+        workspaceFileSystem.listFiles(),
+        workspaceFileSystem.listDirectories(),
+      ]);
       setEntries(files);
+      setDirectories(folders);
       if (selectedPath && !files.some(entry => entry.path === selectedPath)) {
         setSelectedPath(null);
         setPreview({status: 'idle'});
@@ -144,6 +154,10 @@ export const DocumentsScreen: React.FC = observer(() => {
   const totalSize = useMemo(
     () => entries.reduce((sum, entry) => sum + entry.size, 0),
     [entries],
+  );
+  const visibleDirectories = useMemo(
+    () => directories.slice(0, 80),
+    [directories],
   );
 
   const visibleEntries = useMemo(() => {
@@ -181,7 +195,7 @@ export const DocumentsScreen: React.FC = observer(() => {
     async (entry: WorkspaceEntry) => {
       setSelectedPath(entry.path);
       setStatusMessage('');
-      if (!isTextLikeWorkspacePath(entry.path)) {
+      if (!isReadableWorkspacePath(entry.path)) {
         setPreview({status: 'binary', path: entry.path});
         return;
       }
@@ -274,6 +288,92 @@ export const DocumentsScreen: React.FC = observer(() => {
     reload,
   ]);
 
+  const handleCreateDirectory = useCallback(async () => {
+    setStatusMessage('');
+    try {
+      const safePath = newDirectoryPath.trim() || copy.defaultFolderName;
+      const result = await workspaceFileSystem.mkdir(safePath);
+      setNewDirectoryPath(copy.defaultFolderName);
+      setStatusMessage(t(copy.folderCreated, {path: result}));
+      await reload();
+    } catch (error) {
+      setStatusMessage(
+        error instanceof Error ? error.message : copy.folderCreateFailed,
+      );
+    }
+  }, [
+    copy.defaultFolderName,
+    copy.folderCreateFailed,
+    copy.folderCreated,
+    newDirectoryPath,
+    reload,
+  ]);
+
+  const handleDeleteDirectory = useCallback(
+    (entry: WorkspaceEntry) => {
+      Alert.alert(
+        copy.deleteFolderTitle,
+        t(copy.deleteFolderMessage, {path: entry.path}),
+        [
+          {text: l10n.common.cancel, style: 'cancel'},
+          {
+            text: l10n.common.delete,
+            style: 'destructive',
+            onPress: async () => {
+              try {
+                await workspaceFileSystem.deletePath(entry.path);
+                setStatusMessage(t(copy.folderDeleted, {path: entry.path}));
+                await reload();
+              } catch {
+                setStatusMessage(copy.folderDeleteFailed);
+              }
+            },
+          },
+        ],
+      );
+    },
+    [
+      copy.deleteFolderMessage,
+      copy.deleteFolderTitle,
+      copy.folderDeleteFailed,
+      copy.folderDeleted,
+      l10n.common.cancel,
+      l10n.common.delete,
+      reload,
+    ],
+  );
+
+  const handlePruneEmptyDirectories = useCallback(() => {
+    Alert.alert(copy.pruneEmptyTitle, copy.pruneEmptyMessage, [
+      {text: l10n.common.cancel, style: 'cancel'},
+      {
+        text: copy.pruneEmpty,
+        style: 'destructive',
+        onPress: async () => {
+          try {
+            const result = await workspaceFileSystem.deleteEmptyDirectories();
+            setStatusMessage(
+              t(copy.pruneEmptyComplete, {
+                count: String(result.deleted.length),
+              }),
+            );
+            await reload();
+          } catch {
+            setStatusMessage(copy.pruneEmptyFailed);
+          }
+        },
+      },
+    ]);
+  }, [
+    copy.pruneEmpty,
+    copy.pruneEmptyComplete,
+    copy.pruneEmptyFailed,
+    copy.pruneEmptyMessage,
+    copy.pruneEmptyTitle,
+    l10n.common.cancel,
+    reload,
+  ]);
+
   const handleDelete = useCallback(
     (entry: WorkspaceEntry) => {
       Alert.alert(copy.deleteTitle, t(copy.deleteMessage, {path: entry.path}), [
@@ -312,7 +412,7 @@ export const DocumentsScreen: React.FC = observer(() => {
   const handleClone = useCallback(
     async (entry: WorkspaceEntry) => {
       setStatusMessage('');
-      if (!isTextLikeWorkspacePath(entry.path)) {
+      if (!isReadableWorkspacePath(entry.path)) {
         setStatusMessage(copy.binaryCloneBlocked);
         return;
       }
@@ -354,7 +454,7 @@ export const DocumentsScreen: React.FC = observer(() => {
   const handleCopy = useCallback(
     async (entry: WorkspaceEntry) => {
       setStatusMessage('');
-      if (!isTextLikeWorkspacePath(entry.path)) {
+      if (!isReadableWorkspacePath(entry.path)) {
         setStatusMessage(copy.binaryCloneBlocked);
         return;
       }
@@ -501,7 +601,10 @@ export const DocumentsScreen: React.FC = observer(() => {
                   {formatBytes(totalSize)}
                 </Text>
                 <Text style={styles.summaryLabel}>
-                  {t(copy.storage, {size: formatBytes(totalSize)})}
+                  {t(copy.storage, {
+                    size: formatBytes(totalSize),
+                    folders: String(directories.length),
+                  })}
                 </Text>
               </View>
             </View>
@@ -522,6 +625,15 @@ export const DocumentsScreen: React.FC = observer(() => {
                 compact
                 onPress={() => setIsCreating(value => !value)}>
                 {copy.newNote}
+              </Button>
+              <Button
+                mode={isManagingDirs ? 'contained' : 'outlined'}
+                compact
+                onPress={() => setIsManagingDirs(value => !value)}
+                icon={({color}) => (
+                  <PlusIcon width={16} height={16} stroke={color} />
+                )}>
+                {copy.manageFolders}
               </Button>
               <Button
                 mode="text"
@@ -567,6 +679,89 @@ export const DocumentsScreen: React.FC = observer(() => {
                 <Button mode="contained" onPress={handleCreate}>
                   {copy.create}
                 </Button>
+              </View>
+            ) : null}
+
+            {isManagingDirs ? (
+              <View style={styles.createPanel} testID="documents-dir-manager">
+                <View style={styles.createPanelHeader}>
+                  <Text variant="titleSmall" style={styles.createPanelTitle}>
+                    {copy.manageFolders}
+                  </Text>
+                  <TouchableOpacity onPress={() => setIsManagingDirs(false)}>
+                    <CloseIcon
+                      width={18}
+                      height={18}
+                      stroke={theme.colors.onSurfaceVariant}
+                    />
+                  </TouchableOpacity>
+                </View>
+                <TextInput
+                  testID="documents-folder-path"
+                  label={copy.folderNameLabel}
+                  value={newDirectoryPath}
+                  onChangeText={setNewDirectoryPath}
+                  autoCapitalize="none"
+                  autoCorrect={false}
+                  style={styles.input}
+                />
+                <View style={styles.actionRow}>
+                  <Button
+                    testID="documents-create-folder"
+                    mode="contained"
+                    compact
+                    onPress={handleCreateDirectory}>
+                    {copy.createFolder}
+                  </Button>
+                  <Button
+                    testID="documents-prune-empty-folders"
+                    mode="outlined"
+                    compact
+                    onPress={handlePruneEmptyDirectories}>
+                    {copy.pruneEmpty}
+                  </Button>
+                </View>
+                <View style={styles.folderList}>
+                  <Text style={styles.folderListTitle}>
+                    {t(copy.folderCount, {
+                      count: String(directories.length),
+                    })}
+                  </Text>
+                  {visibleDirectories.length === 0 ? (
+                    <Text style={styles.previewMessage}>{copy.noFolders}</Text>
+                  ) : (
+                    visibleDirectories.map(entry => (
+                      <View
+                        key={entry.path}
+                        style={styles.folderRow}
+                        testID={`documents-dir-row-${entry.path}`}>
+                        <View style={styles.fileText}>
+                          <Text
+                            variant="bodyMedium"
+                            style={styles.fileName}
+                            numberOfLines={1}>
+                            {entry.path}
+                          </Text>
+                          <Text
+                            variant="bodySmall"
+                            style={styles.fileMeta}
+                            numberOfLines={1}>
+                            {entry.modifiedAt
+                              ? modifiedLabel(entry.modifiedAt)
+                              : copy.folder}
+                          </Text>
+                        </View>
+                        <Button
+                          compact
+                          mode="text"
+                          textColor={theme.colors.error}
+                          onPress={() => handleDeleteDirectory(entry)}>
+                          {l10n.common.delete}
+                        </Button>
+                      </View>
+                    ))
+                  )}
+                </View>
               </View>
             ) : null}
 

@@ -43,6 +43,7 @@ import {
   saveMailBridgeToken,
   saveSearchProviderApiKey,
   talentRegistry,
+  validateMailBridgeEndpoint,
 } from '../../services/talents';
 import {
   MAIL_PROVIDER_LABELS,
@@ -186,6 +187,9 @@ export const TalentsScreen: React.FC = observer(() => {
     provider === 'searxng' || provider === 'mcp_http'
       ? endpointConfigured
       : webKeyConfigured;
+  const mailEndpointValidation = validateMailBridgeEndpoint(
+    talentStore.mailBridgeSettings.endpoint,
+  );
 
   const refreshWebKeyStatus = useCallback(async () => {
     setIsLoadingSecret(true);
@@ -360,6 +364,11 @@ export const TalentsScreen: React.FC = observer(() => {
 
   const handleTestMailBridge = async () => {
     Keyboard.dismiss();
+    if (!isDirectMailProvider && !mailEndpointValidation.ok) {
+      setMailStatusTone('error');
+      setMailStatusMessage(mailEndpointValidation.errorMessage);
+      return;
+    }
     setIsTestingMailBridge(true);
     setMailStatusTone('default');
     setMailStatusMessage('Checking mail bridge...');
@@ -506,8 +515,9 @@ export const TalentsScreen: React.FC = observer(() => {
     : providerConfigured
       ? copy.webSearch.configured
       : copy.webSearch.notConfigured;
-  const mailEndpointConfigured =
-    !!talentStore.mailBridgeSettings.endpoint.trim();
+  const mailEndpointConfigured = isDirectMailProvider
+    ? true
+    : mailEndpointValidation.ok;
   const mailIdentityConfigured =
     !isDirectMailProvider ||
     (!!talentStore.mailBridgeSettings.accountEmail.trim() &&
@@ -859,20 +869,37 @@ export const TalentsScreen: React.FC = observer(() => {
             )}
           </View>
 
-          <TextInput
-            testID="talents-mail-endpoint-input"
-            label={
-              isDirectMailProvider ? 'Mail bridge endpoint' : 'Bridge endpoint'
-            }
-            placeholder="https://mail.example.com"
-            value={talentStore.mailBridgeSettings.endpoint}
-            autoCapitalize="none"
-            autoCorrect={false}
-            onChangeText={endpoint =>
-              talentStore.updateMailBridgeSettings({endpoint})
-            }
-            style={styles.input}
-          />
+          {!isDirectMailProvider ? (
+            <>
+              <TextInput
+                testID="talents-mail-endpoint-input"
+                label="Bridge endpoint"
+                placeholder="https://mail.example.com"
+                value={talentStore.mailBridgeSettings.endpoint}
+                autoCapitalize="none"
+                autoCorrect={false}
+                onChangeText={endpoint =>
+                  talentStore.updateMailBridgeSettings({endpoint})
+                }
+                style={styles.input}
+              />
+              <Text
+                testID="talents-mail-endpoint-help"
+                variant="bodySmall"
+                style={[
+                  styles.helperText,
+                  talentStore.mailBridgeSettings.endpoint.trim() &&
+                  !mailEndpointValidation.ok
+                    ? styles.statusMessageError
+                    : undefined,
+                ]}>
+                {talentStore.mailBridgeSettings.endpoint.trim() &&
+                !mailEndpointValidation.ok
+                  ? mailEndpointValidation.errorMessage
+                  : 'Use an LLMm-compatible HTTP(S) bridge base URL. The bridge should expose /mail/status, /mail/search, /mail/read, and /mail/send.'}
+              </Text>
+            </>
+          ) : null}
           <TextInput
             testID="talents-mail-account-input"
             label="Account email"
@@ -1067,9 +1094,9 @@ export const TalentsScreen: React.FC = observer(() => {
 
           <Text variant="bodySmall" style={styles.helperText}>
             {mailProvider === 'gmail'
-              ? 'Gmail requires IMAP enabled and a Google app password from account security. The app password is stored in Keychain and passed only to the configured mail bridge.'
+              ? 'Gmail uses direct on-device IMAP/SMTP. Enable IMAP in Gmail and paste a Google app password; the credential is stored in Keychain and is not sent to an LLMm bridge.'
               : isDirectMailProvider
-                ? 'IMAP/SMTP credentials are stored in Keychain and passed only to the configured mail bridge.'
+                ? 'IMAP/SMTP uses direct on-device mail server access. Credentials are stored in Keychain.'
                 : 'Search/read/send use the configured bridge. Sending still requires explicit user confirmation before the agent can call mail_send.'}
           </Text>
 
@@ -1109,9 +1136,10 @@ export const TalentsScreen: React.FC = observer(() => {
               loading={isTestingMailBridge}
               disabled={
                 isTestingMailBridge ||
-                !talentStore.mailBridgeSettings.endpoint.trim()
+                (!isDirectMailProvider && !mailEndpointValidation.ok) ||
+                (isDirectMailProvider && !mailIdentityConfigured)
               }>
-              Test mail
+              {isDirectMailProvider ? 'Test account' : 'Test bridge'}
             </Button>
           </View>
         </View>

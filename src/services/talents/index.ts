@@ -17,6 +17,8 @@ import {WorkspaceShellTalentUI} from './WorkspaceShellTalentUI';
 import {
   WorkspaceDeleteEngine,
   WorkspaceListEngine,
+  WorkspaceMakeDirEngine,
+  WorkspacePruneEmptyDirsEngine,
   WorkspaceReadEngine,
   WorkspaceSearchEngine,
   WorkspaceWriteEngine,
@@ -26,8 +28,16 @@ import {
   CalendarFindEventsEngine,
   ReminderCompleteEngine,
   ReminderCreateEngine,
+  ReminderDeleteEngine,
   ReminderFindEngine,
 } from './AppleOrganizerEngines';
+import {
+  ClockCancelEngine,
+  ClockCreateAlarmEngine,
+  ClockCreateTimerEngine,
+  ClockListEngine,
+  ClockStopEngine,
+} from './AppleClockEngines';
 import {talentRegistry} from './TalentRegistry';
 import {talentUIRegistry} from './TalentUIRegistry';
 import type {ToolDefinition} from './types';
@@ -46,6 +56,7 @@ export {
   MailReadEngine,
   MailSearchEngine,
   MailSendEngine,
+  validateMailBridgeEndpoint,
 } from './MailBridgeEngines';
 export {WebSearchEngine} from './WebSearchEngine';
 export {DeepResearchEngine} from './DeepResearchEngine';
@@ -56,6 +67,8 @@ export {WorkspaceShellTalentUI} from './WorkspaceShellTalentUI';
 export {
   WorkspaceDeleteEngine,
   WorkspaceListEngine,
+  WorkspaceMakeDirEngine,
+  WorkspacePruneEmptyDirsEngine,
   WorkspaceReadEngine,
   WorkspaceSearchEngine,
   WorkspaceWriteEngine,
@@ -65,8 +78,16 @@ export {
   CalendarFindEventsEngine,
   ReminderCompleteEngine,
   ReminderCreateEngine,
+  ReminderDeleteEngine,
   ReminderFindEngine,
 } from './AppleOrganizerEngines';
+export {
+  ClockCancelEngine,
+  ClockCreateAlarmEngine,
+  ClockCreateTimerEngine,
+  ClockListEngine,
+  ClockStopEngine,
+} from './AppleClockEngines';
 export * from './talentSecrets';
 export type {TalentEngine, TalentResult, ToolDefinition} from './types';
 
@@ -95,7 +116,9 @@ export function registerDefaultTalents(): void {
   talentRegistry.register(new WorkspaceListEngine());
   talentRegistry.register(new WorkspaceReadEngine());
   talentRegistry.register(new WorkspaceWriteEngine());
+  talentRegistry.register(new WorkspaceMakeDirEngine());
   talentRegistry.register(new WorkspaceDeleteEngine());
+  talentRegistry.register(new WorkspacePruneEmptyDirsEngine());
   talentRegistry.register(new WorkspaceSearchEngine());
   talentRegistry.register(new WorkspaceShellEngine());
   talentRegistry.register(new CalendarFindEventsEngine());
@@ -103,6 +126,12 @@ export function registerDefaultTalents(): void {
   talentRegistry.register(new ReminderFindEngine());
   talentRegistry.register(new ReminderCreateEngine());
   talentRegistry.register(new ReminderCompleteEngine());
+  talentRegistry.register(new ReminderDeleteEngine());
+  talentRegistry.register(new ClockListEngine());
+  talentRegistry.register(new ClockCreateTimerEngine());
+  talentRegistry.register(new ClockCreateAlarmEngine());
+  talentRegistry.register(new ClockCancelEngine());
+  talentRegistry.register(new ClockStopEngine());
   // UIs
   talentUIRegistry.register(new RenderHtmlTalentUI());
   talentUIRegistry.register(new WorkspaceShellTalentUI());

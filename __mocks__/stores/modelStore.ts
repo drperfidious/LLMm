@@ -264,7 +264,7 @@ class MockModelStore {
             source: 'manual',
           },
         };
-        if (this.activeModelId === modelId) {
+        if (this.activeModelId === modelId || !this.activeModelId) {
           this.contextInitParams = normalizedSettings;
           this.requestedContextSize = limitInfo.requested;
           this.allowUnsafeContextLimits = allowUnsafe;
@@ -275,6 +275,11 @@ class MockModelStore {
     this.clearModelInitProfile = jest.fn((modelId: string) => {
       const {[modelId]: _removed, ...remaining} = this.modelInitProfiles;
       this.modelInitProfiles = remaining;
+      if (this.activeModelId === modelId || !this.activeModelId) {
+        this.contextInitParams = createDefaultContextInitParams();
+        this.requestedContextSize = this.contextInitParams.n_ctx;
+        this.allowUnsafeContextLimits = false;
+      }
     });
     this.enterBenchmarkMode = jest.fn().mockResolvedValue(undefined);
     this.exitBenchmarkMode = jest.fn();

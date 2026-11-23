@@ -31,8 +31,14 @@ import {
   WorkspaceWriteEngine,
   CalendarCreateEventEngine,
   CalendarFindEventsEngine,
+  ClockCancelEngine,
+  ClockCreateAlarmEngine,
+  ClockCreateTimerEngine,
+  ClockListEngine,
+  ClockStopEngine,
   ReminderCompleteEngine,
   ReminderCreateEngine,
+  ReminderDeleteEngine,
   ReminderFindEngine,
   deriveToolSchemas,
   resetRegisteredFlag,
@@ -135,6 +141,12 @@ describe('PACT cleanup: toToolDefinition() contract', () => {
     new ReminderFindEngine(),
     new ReminderCreateEngine(),
     new ReminderCompleteEngine(),
+    new ReminderDeleteEngine(),
+    new ClockListEngine(),
+    new ClockCreateTimerEngine(),
+    new ClockCreateAlarmEngine(),
+    new ClockCancelEngine(),
+    new ClockStopEngine(),
   ];
 
   it.each(engines.map(e => [e.name, e]))(
@@ -180,13 +192,18 @@ describe('PACT cleanup: deriveToolSchemas()', () => {
     expect(talentRegistry.getAll()).toHaveLength(0);
 
     const schemas = deriveToolSchemas();
-    expect(schemas).toHaveLength(22);
+    expect(schemas).toHaveLength(30);
 
     const names = schemas.map(s => s.function.name).sort();
     expect(names).toEqual([
       'calculate',
       'calendar_create_event',
       'calendar_find_events',
+      'clock_cancel',
+      'clock_create_alarm',
+      'clock_create_timer',
+      'clock_list',
+      'clock_stop',
       'create_talent',
       'datetime',
       'deep_research',
@@ -196,12 +213,15 @@ describe('PACT cleanup: deriveToolSchemas()', () => {
       'mail_send',
       'reminder_complete',
       'reminder_create',
+      'reminder_delete',
       'reminder_find',
       'render_html',
       'sms_draft',
       'web_search',
       'workspace_delete',
       'workspace_list',
+      'workspace_mkdir',
+      'workspace_prune_empty_dirs',
       'workspace_read',
       'workspace_search',
       'workspace_shell',
@@ -230,7 +250,7 @@ describe('PACT cleanup: deriveToolSchemas()', () => {
       tool_choice: 'auto' as const,
       jinja: true,
     };
-    expect(completionSettings.tools).toHaveLength(22);
+    expect(completionSettings.tools).toHaveLength(30);
     expect(completionSettings.tools[0].type).toBe('function');
   });
 });

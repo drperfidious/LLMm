@@ -1,4 +1,5 @@
 import {talentStore} from '../../store/TalentStore';
+import {nativeMailClient} from '../mail/NativeMailClient';
 import {getMailBridgeToken} from './talentSecrets';
 import {TalentEngine, TalentResult, ToolDefinition} from './types';
 
@@ -64,6 +65,116 @@ function normalizeEndpoint(endpoint: string): string {
   return endpoint.trim().replace(/\/+$/, '');
 }
 
+const MAIL_BRIDGE_HELP =
+  'Mail endpoint must be an HTTP(S) LLMm mail bridge base URL, such as https://mail.example.com or http://192.168.1.20:8787. It is not a Gmail REST API URL, imap.gmail.com, smtp.gmail.com, or an imap:// / smtp:// URL.';
+
+function hasUrlScheme(value: string): boolean {
+  return /^[a-z][a-z\d+.-]*:\/\//i.test(value);
+}
+
+function looksLikeDirectMailServer(value: string): boolean {
+  const lower = value.trim().toLowerCase();
+  return (
+    /^(imap|smtp|pop3?):\/\//.test(lower) ||
+    /(^|:\/\/)(imap|smtp|pop3?)\./.test(lower) ||
+    /(^|[/:])(imap|smtp|pop3?)\.[^/\s]+/.test(lower)
+  );
+}
+
+function looksLikeGoogleMailApi(value: string): boolean {
+  const lower = value.trim().toLowerCase();
+  return (
+    lower.includes('gmail.googleapis.com') ||
+    lower.includes('googleapis.com/gmail')
+  );
+}
+
+function isPrivateIpv4(hostname: string): boolean {
+  const parts = hostname.split('.').map(part => Number(part));
+  if (parts.length !== 4 || parts.some(part => !Number.isInteger(part))) {
+    return false;
+  }
+  const [a, b] = parts;
+  return (
+    a === 10 ||
+    a === 127 ||
+    (a === 172 && b >= 16 && b <= 31) ||
+    (a === 192 && b === 168)
+  );
+}
+
+function isLocalHostname(hostname: string): boolean {
+  const lower = hostname.toLowerCase();
+  return (
+    lower === 'localhost' ||
+    lower === '::1' ||
+    lower.endsWith('.local') ||
+    isPrivateIpv4(lower)
+  );
+}
+
+export function validateMailBridgeEndpoint(endpoint: string):
+  | {ok: true; endpoint: string}
+  | {ok: false; errorMessage: string} {
+  const trimmed = normalizeEndpoint(endpoint);
+  if (!trimmed) {
+    return {
+      ok: false,
+      errorMessage:
+        'Configure an LLMm-compatible HTTP(S) mail bridge endpoint first.',
+    };
+  }
+
+  if (looksLikeDirectMailServer(trimmed)) {
+    return {
+      ok: false,
+      errorMessage:
+        'That looks like an IMAP/SMTP mail server. Keep imap.gmail.com and smtp.gmail.com in the host fields below; the endpoint field needs an HTTP(S) LLMm mail bridge base URL.',
+    };
+  }
+
+  if (looksLikeGoogleMailApi(trimmed)) {
+    return {
+      ok: false,
+      errorMessage:
+        'That is the Google Gmail REST API, not an LLMm mail bridge. The current mail talents call /mail/status, /mail/search, /mail/read, and /mail/send on a bridge service.',
+    };
+  }
+
+  const candidate = hasUrlScheme(trimmed)
+    ? trimmed
+    : /^(localhost|(\d{1,3}\.){3}\d{1,3})(:\d+)?(\/|$)/i.test(trimmed)
+      ? `http://${trimmed}`
+      : `https://${trimmed}`;
+
+  let parsed: URL;
+  try {
+    parsed = new URL(candidate);
+  } catch {
+    return {
+      ok: false,
+      errorMessage: `Invalid mail bridge URL. ${MAIL_BRIDGE_HELP}`,
+    };
+  }
+
+  if (parsed.protocol !== 'https:' && parsed.protocol !== 'http:') {
+    return {
+      ok: false,
+      errorMessage: `Mail bridge endpoint must use http:// or https://. ${MAIL_BRIDGE_HELP}`,
+    };
+  }
+
+  if (parsed.protocol === 'http:' && !isLocalHostname(parsed.hostname)) {
+    return {
+      ok: false,
+      errorMessage:
+        'Plain HTTP mail bridges are only allowed for local network hosts on iOS. Use HTTPS for remote mail bridge endpoints.',
+    };
+  }
+
+  return {ok: true, endpoint: normalizeEndpoint(parsed.toString())};
+}
+
 function addressToText(value: MailAddress | undefined): string {
   if (!value) {
     return '';
@@ -123,13 +234,42 @@ function messageSummaryLine(message: MailMessage, index: number): string {
   }`;
 }
 
-function bridgeConfigError(): TalentResult {
+function bridgeConfigError(errorMessage?: string): TalentResult {
   return {
     type: 'error',
     summary: 'mail: bridge endpoint is not configured',
     errorMessage:
-      'Configure Mail bridge endpoint in Talents before using mail_search, mail_read, or mail_send. Gmail and IMAP/SMTP profiles still use the bridge endpoint until a native mail engine is added.',
+      errorMessage ||
+      'Configure the custom Mail bridge endpoint in Talents before using mail_search, mail_read, or mail_send with the Bridge provider. Gmail and IMAP/SMTP providers use the direct on-device mail engine.',
   };
+}
+
+function directMailConfigError(errorMessage: string): TalentResult {
+  return {
+    type: 'error',
+    summary: 'mail: direct account is not configured',
+    errorMessage,
+  };
+}
+
+function networkErrorMessage(error: unknown): string {
+  const raw = error instanceof Error ? error.message : String(error);
+  if (/network request failed/i.test(raw)) {
+    return `${raw}. Could not reach the mail bridge over HTTP(S). Make sure the endpoint is an LLMm-compatible bridge URL, the phone can reach that host on the network, and remote endpoints use HTTPS.`;
+  }
+  return raw;
+}
+
+function directMailErrorMessage(error: unknown): string {
+  const raw = error instanceof Error ? error.message : String(error);
+  if (/network request failed/i.test(raw)) {
+    return `${raw}. Could not reach the mail server. Confirm IMAP is enabled, the phone has network access, and the host/port/security settings are correct.`;
+  }
+  return raw;
+}
+
+function isDirectMailProvider(): boolean {
+  return talentStore.mailBridgeSettings.provider !== 'custom_bridge';
 }
 
 function configuredMailAccount(): string {
@@ -196,6 +336,76 @@ function bridgePayload(
   };
 }
 
+function validateDirectMailPayload(
+  payload: Record<string, any>,
+): TalentResult | undefined {
+  const settings = talentStore.mailBridgeSettings;
+  if (!configuredMailAccount()) {
+    return directMailConfigError('Enter the mail account email first.');
+  }
+  if (!configuredMailUsername()) {
+    return directMailConfigError('Enter a mail login username first.');
+  }
+  if (!payload.mailAuth?.password) {
+    return directMailConfigError(
+      settings.provider === 'gmail'
+        ? 'Save your Gmail app password before using Gmail mail talents.'
+        : 'Save your mail account password/key before using mail talents.',
+    );
+  }
+  if (!settings.imapHost.trim()) {
+    return directMailConfigError('Enter an IMAP host first.');
+  }
+  if (!settings.smtpHost.trim()) {
+    return directMailConfigError('Enter an SMTP host first.');
+  }
+  if (settings.imapSecurity !== 'ssl' || settings.smtpSecurity !== 'ssl') {
+    return directMailConfigError(
+      'Direct mail currently supports SSL/TLS-on-connect only. Use IMAP 993 ssl and SMTP 465 ssl.',
+    );
+  }
+  return undefined;
+}
+
+async function postToNativeMail(
+  path: string,
+  body: Record<string, any>,
+  tokenProvider: () => Promise<string>,
+): Promise<BridgeResponse | TalentResult> {
+  const token = await tokenProvider();
+  const payload = bridgePayload(body, token);
+  const configError = validateDirectMailPayload(payload);
+  if (configError) {
+    return configError;
+  }
+
+  try {
+    if (path === '/mail/status') {
+      return await nativeMailClient.check(payload);
+    }
+    if (path === '/mail/search') {
+      return await nativeMailClient.search(payload);
+    }
+    if (path === '/mail/read') {
+      return await nativeMailClient.read(payload);
+    }
+    if (path === '/mail/send') {
+      return await nativeMailClient.send(payload);
+    }
+    return {
+      type: 'error',
+      summary: `mail: unsupported native path ${path}`,
+      errorMessage: `Unsupported native mail path: ${path}`,
+    };
+  } catch (error) {
+    return {
+      type: 'error',
+      summary: 'mail: direct mail request failed',
+      errorMessage: directMailErrorMessage(error),
+    };
+  }
+}
+
 async function readError(response: Response): Promise<string> {
   const body = await response.text().catch(() => '');
   return body ? `: ${body.slice(0, 300)}` : '';
@@ -206,22 +416,36 @@ async function postToBridge(
   body: Record<string, any>,
   tokenProvider: () => Promise<string>,
 ): Promise<BridgeResponse | TalentResult> {
-  const settings = talentStore.mailBridgeSettings;
-  const endpoint = normalizeEndpoint(settings.endpoint);
-  if (!endpoint) {
-    return bridgeConfigError();
+  if (isDirectMailProvider()) {
+    return postToNativeMail(path, body, tokenProvider);
   }
 
-  const token = await tokenProvider();
-  const response = await fetch(`${endpoint}${path}`, {
-    method: 'POST',
-    headers: {
-      Accept: 'application/json',
-      'Content-Type': 'application/json',
-      ...bridgeHeaders(token),
-    },
-    body: JSON.stringify(bridgePayload(body, token)),
-  });
+  const settings = talentStore.mailBridgeSettings;
+  const endpointValidation = validateMailBridgeEndpoint(settings.endpoint);
+  if (!endpointValidation.ok) {
+    return bridgeConfigError(endpointValidation.errorMessage);
+  }
+  const endpoint = endpointValidation.endpoint;
+
+  let response: Response;
+  try {
+    const token = await tokenProvider();
+    response = await fetch(`${endpoint}${path}`, {
+      method: 'POST',
+      headers: {
+        Accept: 'application/json',
+        'Content-Type': 'application/json',
+        ...bridgeHeaders(token),
+      },
+      body: JSON.stringify(bridgePayload(body, token)),
+    });
+  } catch (error) {
+    return {
+      type: 'error',
+      summary: 'mail: bridge request failed',
+      errorMessage: networkErrorMessage(error),
+    };
+  }
 
   if (!response.ok) {
     const detail = await readError(response);
@@ -236,7 +460,11 @@ async function postToBridge(
 }
 
 function formatBridgeStatus(data: BridgeResponse): string {
-  const provider = cleanString(data.provider, 'configured bridge');
+  const isNative = cleanString(data.provider).startsWith('native-');
+  const provider = cleanString(
+    data.provider,
+    isNative ? 'native mail' : 'configured bridge',
+  );
   const status = cleanString(data.status, data.ok === false ? 'error' : 'ok');
   const account = cleanString(data.accountEmail);
   const capabilities = Array.isArray(data.capabilities)
@@ -247,7 +475,7 @@ function formatBridgeStatus(data: BridgeResponse): string {
     : [];
 
   return [
-    `Mail bridge ${status}: ${provider}`,
+    `${isNative ? 'Direct mail' : 'Mail bridge'} ${status}: ${provider}`,
     account ? `Account: ${account}` : '',
     capabilities.length ? `Capabilities: ${capabilities.join(', ')}` : '',
     folders.length ? `Folders: ${folders.slice(0, 12).join(', ')}` : '',
@@ -260,11 +488,28 @@ function formatBridgeStatus(data: BridgeResponse): string {
 export async function checkMailBridgeStatus(
   tokenProvider = getMailBridgeToken,
 ): Promise<TalentResult> {
-  const settings = talentStore.mailBridgeSettings;
-  const endpoint = normalizeEndpoint(settings.endpoint);
-  if (!endpoint) {
-    return bridgeConfigError();
+  if (isDirectMailProvider()) {
+    const response = await postToNativeMail('/mail/status', {}, tokenProvider);
+    if ('type' in response) {
+      return response;
+    }
+    const summary = formatBridgeStatus(response);
+    if (response.ok === false) {
+      return {
+        type: 'error',
+        summary,
+        errorMessage: cleanString(response.summary, 'Direct mail is not ready'),
+      };
+    }
+    return {type: 'text', summary};
   }
+
+  const settings = talentStore.mailBridgeSettings;
+  const endpointValidation = validateMailBridgeEndpoint(settings.endpoint);
+  if (!endpointValidation.ok) {
+    return bridgeConfigError(endpointValidation.errorMessage);
+  }
+  const endpoint = endpointValidation.endpoint;
 
   try {
     const token = await tokenProvider();
@@ -308,7 +553,7 @@ export async function checkMailBridgeStatus(
     return {
       type: 'error',
       summary: 'mail: bridge status request failed',
-      errorMessage: error instanceof Error ? error.message : String(error),
+      errorMessage: networkErrorMessage(error),
     };
   }
 }
@@ -323,7 +568,19 @@ export class MailSearchEngine implements TalentEngine {
     category: 'communication' as const,
     configurable: true,
     agentDefaultEnabled: false,
-    keywords: ['email', 'mail', 'inbox', 'search mail', 'find email'],
+    keywords: [
+      'email',
+      'emails',
+      'mail',
+      'mailbox',
+      'inbox',
+      'search mail',
+      'search emails',
+      'find email',
+      'find emails',
+      'check emails',
+      'read emails',
+    ],
   };
 
   constructor(private readonly tokenProvider = getMailBridgeToken) {}
@@ -400,7 +657,15 @@ export class MailReadEngine implements TalentEngine {
     category: 'communication' as const,
     configurable: true,
     agentDefaultEnabled: false,
-    keywords: ['read email', 'open email', 'mail message', 'inbox'],
+    keywords: [
+      'read email',
+      'read emails',
+      'open email',
+      'open emails',
+      'mail message',
+      'mailbox',
+      'inbox',
+    ],
   };
 
   constructor(private readonly tokenProvider = getMailBridgeToken) {}
@@ -490,7 +755,15 @@ export class MailSendEngine implements TalentEngine {
     configurable: true,
     sideEffect: true,
     agentDefaultEnabled: false,
-    keywords: ['send email', 'reply email', 'mail someone', 'email'],
+    keywords: [
+      'send email',
+      'send emails',
+      'reply email',
+      'reply emails',
+      'mail someone',
+      'email',
+      'emails',
+    ],
   };
 
   constructor(private readonly tokenProvider = getMailBridgeToken) {}

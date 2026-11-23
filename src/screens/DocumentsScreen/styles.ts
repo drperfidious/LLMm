@@ -249,6 +249,26 @@ export const createStyles = (theme: Theme) =>
       alignItems: 'center',
       gap: theme.spacing.s,
     },
+    folderList: {
+      gap: theme.spacing.xs,
+      borderTopWidth: 1,
+      borderTopColor: theme.colors.outlineVariant,
+      paddingTop: theme.spacing.s,
+    },
+    folderListTitle: {
+      ...theme.fonts.labelLarge,
+      color: theme.colors.onSurfaceVariant,
+    },
+    folderRow: {
+      minHeight: 44,
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: theme.spacing.s,
+      borderRadius: 8,
+      backgroundColor: theme.colors.surfaceContainerHighest,
+      paddingHorizontal: theme.spacing.s,
+      paddingVertical: theme.spacing.xs,
+    },
     actionButton: {
       minWidth: 120,
     },

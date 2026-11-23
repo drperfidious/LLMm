@@ -42,6 +42,8 @@ describe('flashAttnCompatibility', () => {
         expect(await inferBackendType([])).toBe('metal');
         expect(await inferBackendType(['CPU'])).toBe('cpu');
         expect(await inferBackendType(undefined)).toBe('metal');
+        expect(await inferBackendType(['Apple A16 GPU'])).toBe('metal');
+        expect(await inferBackendType(['Apple A15 GPU'])).toBe('metal');
         expect(await inferBackendType(['blah-blah'])).toBe('cpu');
       });
     });
@@ -291,12 +293,8 @@ describe('flashAttnCompatibility', () => {
   describe('isFlashAttnCachePairSafe', () => {
     it('allows matching non-Turbo Metal flash attention pairs', () => {
       expect(
-        isFlashAttnCachePairSafe(
-          CacheType.Q8_0,
-          CacheType.Q8_0,
-          'on',
-          'metal',
-        ).safe,
+        isFlashAttnCachePairSafe(CacheType.Q8_0, CacheType.Q8_0, 'on', 'metal')
+          .safe,
       ).toBe(true);
     });
 
@@ -313,12 +311,8 @@ describe('flashAttnCompatibility', () => {
 
     it('does not restrict mismatched pairs when flash attention is off', () => {
       expect(
-        isFlashAttnCachePairSafe(
-          CacheType.Q8_0,
-          CacheType.F16,
-          'off',
-          'metal',
-        ).safe,
+        isFlashAttnCachePairSafe(CacheType.Q8_0, CacheType.F16, 'off', 'metal')
+          .safe,
       ).toBe(true);
     });
   });
@@ -405,9 +399,7 @@ describe('flashAttnCompatibility', () => {
       expect(options.find(o => o.value === CacheType.Q8_0)?.disabled).toBe(
         false,
       );
-      expect(options.find(o => o.value === CacheType.F16)?.disabled).toBe(
-        true,
-      );
+      expect(options.find(o => o.value === CacheType.F16)?.disabled).toBe(true);
       expect(options.find(o => o.value === CacheType.Q4_0)?.disabled).toBe(
         true,
       );
@@ -432,9 +424,9 @@ describe('flashAttnCompatibility', () => {
       flashAttnTypes.forEach(flashAttn => {
         backends.forEach(backend => {
           const options = getAllowedCacheTypeKOptions(flashAttn, backend);
-          expect(options.find(o => o.value === CacheType.TURBO4)?.disabled).toBe(
-            true,
-          );
+          expect(
+            options.find(o => o.value === CacheType.TURBO4)?.disabled,
+          ).toBe(true);
           expect(options.find(o => o.value === CacheType.Q8_0)?.disabled).toBe(
             false,
           );
@@ -474,9 +466,7 @@ describe('flashAttnCompatibility', () => {
       expect(options.find(o => o.value === CacheType.Q8_0)?.disabled).toBe(
         false,
       );
-      expect(options.find(o => o.value === CacheType.F16)?.disabled).toBe(
-        true,
-      );
+      expect(options.find(o => o.value === CacheType.F16)?.disabled).toBe(true);
       expect(options.find(o => o.value === CacheType.Q4_0)?.disabled).toBe(
         true,
       );

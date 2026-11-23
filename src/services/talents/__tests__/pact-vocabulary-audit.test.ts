@@ -143,7 +143,9 @@ describe('PACT vocabulary audit', () => {
       expect(talentRegistry.has('workspace_list')).toBe(true);
       expect(talentRegistry.has('workspace_read')).toBe(true);
       expect(talentRegistry.has('workspace_write')).toBe(true);
+      expect(talentRegistry.has('workspace_mkdir')).toBe(true);
       expect(talentRegistry.has('workspace_delete')).toBe(true);
+      expect(talentRegistry.has('workspace_prune_empty_dirs')).toBe(true);
       expect(talentRegistry.has('workspace_search')).toBe(true);
       expect(talentRegistry.has('workspace_shell')).toBe(true);
       expect(talentRegistry.has('calendar_find_events')).toBe(true);
@@ -151,6 +153,12 @@ describe('PACT vocabulary audit', () => {
       expect(talentRegistry.has('reminder_find')).toBe(true);
       expect(talentRegistry.has('reminder_create')).toBe(true);
       expect(talentRegistry.has('reminder_complete')).toBe(true);
+      expect(talentRegistry.has('reminder_delete')).toBe(true);
+      expect(talentRegistry.has('clock_list')).toBe(true);
+      expect(talentRegistry.has('clock_create_timer')).toBe(true);
+      expect(talentRegistry.has('clock_create_alarm')).toBe(true);
+      expect(talentRegistry.has('clock_cancel')).toBe(true);
+      expect(talentRegistry.has('clock_stop')).toBe(true);
     });
 
     it('engines retrieved by name are executable', async () => {
@@ -181,7 +189,7 @@ describe('PACT vocabulary audit', () => {
 
     it('returns ToolDefinition array for all registered engines', () => {
       const schemas = deriveToolSchemas();
-      expect(schemas).toHaveLength(22);
+      expect(schemas).toHaveLength(30);
       const names = schemas.map(s => s.function.name);
       expect(names).toContain('calendar_find_events');
       expect(names).toContain('calendar_create_event');
@@ -191,6 +199,12 @@ describe('PACT vocabulary audit', () => {
       expect(names).toContain('reminder_find');
       expect(names).toContain('reminder_create');
       expect(names).toContain('reminder_complete');
+      expect(names).toContain('reminder_delete');
+      expect(names).toContain('clock_list');
+      expect(names).toContain('clock_create_timer');
+      expect(names).toContain('clock_create_alarm');
+      expect(names).toContain('clock_cancel');
+      expect(names).toContain('clock_stop');
       expect(names).toContain('sms_draft');
       expect(names).toContain('mail_draft');
       expect(names).toContain('mail_search');
@@ -202,7 +216,9 @@ describe('PACT vocabulary audit', () => {
       expect(names).toContain('workspace_list');
       expect(names).toContain('workspace_read');
       expect(names).toContain('workspace_write');
+      expect(names).toContain('workspace_mkdir');
       expect(names).toContain('workspace_delete');
+      expect(names).toContain('workspace_prune_empty_dirs');
       expect(names).toContain('workspace_search');
       expect(names).toContain('workspace_shell');
     });
@@ -212,7 +228,7 @@ describe('PACT vocabulary audit', () => {
       // registerDefaultTalents internally.
       expect(talentRegistry.has('render_html')).toBe(false);
       const schemas = deriveToolSchemas();
-      expect(schemas).toHaveLength(22);
+      expect(schemas).toHaveLength(30);
       expect(talentRegistry.has('render_html')).toBe(true);
     });
   });

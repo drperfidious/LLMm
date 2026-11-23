@@ -78,6 +78,7 @@ class AppleCalendarModule: NSObject, RCTBridgeModule {
                     return event.title.lowercased().contains(needle)
                         || (event.notes?.lowercased().contains(needle) ?? false)
                         || (event.location?.lowercased().contains(needle) ?? false)
+                        || (event.calendar.title.lowercased().contains(needle))
                 }
                 .sorted { $0.startDate < $1.startDate }
                 .prefix(max)
@@ -223,6 +224,32 @@ class AppleCalendarModule: NSObject, RCTBridgeModule {
                 resolve(self.serializeReminder(reminder))
             } catch {
                 reject("reminder_save_failed", error.localizedDescription, error)
+            }
+        }
+    }
+
+    @objc
+    func deleteReminder(_ identifier: NSString, resolver resolve: @escaping RCTPromiseResolveBlock, rejecter reject: @escaping RCTPromiseRejectBlock) {
+        requestRemindersAccess { granted, _, error in
+            if let error = error {
+                reject("reminder_access_error", error.localizedDescription, error)
+                return
+            }
+            guard granted else {
+                reject("reminder_access_denied", "Reminders access was denied.", nil)
+                return
+            }
+            guard let reminder = self.eventStore.calendarItem(withIdentifier: identifier as String) as? EKReminder else {
+                reject("reminder_not_found", "Reminder was not found.", nil)
+                return
+            }
+
+            let serialized = self.serializeReminder(reminder)
+            do {
+                try self.eventStore.remove(reminder, commit: true)
+                resolve(serialized.merging(["deleted": true]) { _, new in new })
+            } catch {
+                reject("reminder_delete_failed", error.localizedDescription, error)
             }
         }
     }

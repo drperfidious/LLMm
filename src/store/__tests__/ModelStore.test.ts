@@ -133,6 +133,7 @@ describe('ModelStore', () => {
     modelStore.lastUsedModelId = undefined;
     modelStore.activeContextSettings = undefined;
     modelStore.metalLoadFailures = {};
+    modelStore.dynamicMetalBatchTuning = false;
     modelStore.contextInitParams = createDefaultContextInitParams();
     modelStore.requestedContextSize = undefined;
     modelStore.modelInitProfiles = {};
@@ -2225,6 +2226,18 @@ describe('ModelStore', () => {
       expect(modelStore.contextInitParams.cache_type_v).toBe('q8_0'); // Should change
     });
 
+    it('should set paired cache types atomically when flash attention is enabled', () => {
+      modelStore.setFlashAttnType('off' as any);
+      modelStore.setCacheTypes('q4_0' as any, 'q4_0' as any);
+      expect(modelStore.contextInitParams.cache_type_k).toBe('f16');
+      expect(modelStore.contextInitParams.cache_type_v).toBe('f16');
+
+      modelStore.setFlashAttnType('on' as any);
+      modelStore.setCacheTypes('q4_0' as any, 'q4_0' as any);
+      expect(modelStore.contextInitParams.cache_type_k).toBe('q4_0');
+      expect(modelStore.contextInitParams.cache_type_v).toBe('q4_0');
+    });
+
     it('should pass persisted Turbo K/V through to context init', async () => {
       modelStore.setFlashAttnType('on' as any);
       modelStore.contextInitParams = {
@@ -2453,6 +2466,222 @@ describe('ModelStore', () => {
       expect(modelStore.activeModelId).toBe(modelB.id);
     });
 
+    it('does not overwrite an offloaded model profile with ownerless global settings before load', async () => {
+      const {initLlama} = require('llama.rn');
+      const initLlamaMock = initLlama as jest.Mock;
+      initLlamaMock.mockReset();
+      initLlamaMock.mockResolvedValue(createMockLoadedContext());
+
+      const model = {
+        ...presetModelFixture,
+        id: 'offloaded-profile-model',
+        name: 'Offloaded profile model',
+        isDownloaded: true,
+      };
+
+      modelStore.models = [model];
+      modelStore.activeModelId = undefined;
+      modelStore.lastUsedModelId = model.id;
+      (modelStore as any).contextInitParamsOwnerModelId = undefined;
+      modelStore.contextInitParams = {
+        ...modelStore.contextInitParams,
+        cache_type_k: 'turbo4' as any,
+        cache_type_v: 'turbo4' as any,
+      };
+      modelStore.modelInitProfiles = {
+        [model.id]: {
+          version: 1,
+          settings: {
+            ...modelStore.contextInitParams,
+            cache_type_k: 'turbo3' as any,
+            cache_type_v: 'turbo3' as any,
+          },
+          allowUnsafeContextLimits: true,
+          requestedContextSize: modelStore.contextInitParams.n_ctx,
+          updatedAt: '2026-06-20T00:00:00.000Z',
+          source: 'manual',
+        },
+      };
+
+      await modelStore.initContext(model);
+
+      expect(initLlamaMock).toHaveBeenCalledWith(
+        expect.objectContaining({
+          cache_type_k: 'turbo3',
+          cache_type_v: 'turbo3',
+        }),
+        expect.any(Function),
+      );
+      expect(modelStore.contextInitParams.cache_type_k).toBe('turbo3');
+      expect(modelStore.contextInitParams.cache_type_v).toBe('turbo3');
+      expect(modelStore.modelInitProfiles[model.id].settings.cache_type_k).toBe(
+        'turbo3',
+      );
+      expect(modelStore.modelInitProfiles[model.id].settings.cache_type_v).toBe(
+        'turbo3',
+      );
+    });
+
+    it('does not overwrite a same-model offloaded profile with stale owner settings before load', async () => {
+      const {initLlama} = require('llama.rn');
+      const initLlamaMock = initLlama as jest.Mock;
+      initLlamaMock.mockReset();
+      initLlamaMock.mockResolvedValue(createMockLoadedContext());
+
+      const model = {
+        ...presetModelFixture,
+        id: 'same-model-offloaded-profile',
+        name: 'Same model offloaded profile',
+        isDownloaded: true,
+      };
+
+      modelStore.models = [model];
+      modelStore.activeModelId = undefined;
+      modelStore.lastUsedModelId = model.id;
+      (modelStore as any).contextInitParamsOwnerModelId = model.id;
+      modelStore.contextInitParams = {
+        ...modelStore.contextInitParams,
+        cache_type_k: 'iq4_nl' as any,
+        cache_type_v: 'iq4_nl' as any,
+      };
+      modelStore.modelInitProfiles = {
+        [model.id]: {
+          version: 1,
+          settings: {
+            ...modelStore.contextInitParams,
+            cache_type_k: 'turbo4' as any,
+            cache_type_v: 'turbo4' as any,
+          },
+          allowUnsafeContextLimits: true,
+          requestedContextSize: modelStore.contextInitParams.n_ctx,
+          updatedAt: '2026-06-20T00:00:00.000Z',
+          source: 'manual',
+        },
+      };
+
+      await modelStore.initContext(model);
+
+      expect(initLlamaMock).toHaveBeenCalledWith(
+        expect.objectContaining({
+          cache_type_k: 'turbo4',
+          cache_type_v: 'turbo4',
+        }),
+        expect.any(Function),
+      );
+      expect(modelStore.contextInitParams.cache_type_k).toBe('turbo4');
+      expect(modelStore.contextInitParams.cache_type_v).toBe('turbo4');
+      expect(modelStore.modelInitProfiles[model.id].settings.cache_type_k).toBe(
+        'turbo4',
+      );
+      expect(modelStore.modelInitProfiles[model.id].settings.cache_type_v).toBe(
+        'turbo4',
+      );
+    });
+
+    it('hydrates live settings when saving an offloaded model profile', () => {
+      const model = {
+        ...presetModelFixture,
+        id: 'offloaded-live-profile',
+        name: 'Offloaded live profile',
+        isDownloaded: true,
+      };
+
+      modelStore.models = [model];
+      modelStore.activeModelId = undefined;
+      (modelStore as any).contextInitParamsOwnerModelId = undefined;
+      modelStore.contextInitParams = {
+        ...modelStore.contextInitParams,
+        cache_type_k: 'iq4_nl' as any,
+        cache_type_v: 'iq4_nl' as any,
+      };
+
+      modelStore.saveModelInitProfileSettings(
+        model.id,
+        {
+          ...modelStore.contextInitParams,
+          cache_type_k: 'turbo4' as any,
+          cache_type_v: 'turbo4' as any,
+        },
+        true,
+        'manual',
+        modelStore.contextInitParams.n_ctx,
+      );
+
+      expect(modelStore.modelInitProfiles[model.id].settings.cache_type_k).toBe(
+        'turbo4',
+      );
+      expect(modelStore.modelInitProfiles[model.id].settings.cache_type_v).toBe(
+        'turbo4',
+      );
+      expect(modelStore.contextInitParams.cache_type_k).toBe('turbo4');
+      expect(modelStore.contextInitParams.cache_type_v).toBe('turbo4');
+      expect((modelStore as any).contextInitParamsOwnerModelId).toBe(model.id);
+    });
+
+    it('reloads the active model when its saved start profile changes', async () => {
+      const {initLlama} = require('llama.rn');
+      const initLlamaMock = initLlama as jest.Mock;
+      const firstContext = createMockLoadedContext();
+      const secondContext = createMockLoadedContext();
+      initLlamaMock.mockReset();
+      initLlamaMock
+        .mockResolvedValueOnce(firstContext)
+        .mockResolvedValueOnce(secondContext);
+
+      const model = {
+        ...presetModelFixture,
+        id: 'active-profile-model',
+        name: 'Active profile model',
+        isDownloaded: true,
+      };
+      modelStore.models = [model];
+      modelStore.modelInitProfiles = {
+        [model.id]: {
+          version: 1,
+          settings: {
+            ...modelStore.contextInitParams,
+            n_ctx: 8192,
+            n_batch: 512,
+            n_ubatch: 512,
+          },
+          allowUnsafeContextLimits: true,
+          requestedContextSize: 8192,
+          updatedAt: '2026-06-20T00:00:00.000Z',
+          source: 'manual',
+        },
+      };
+
+      await modelStore.initContext(model);
+
+      expect(initLlamaMock).toHaveBeenCalledTimes(1);
+      expect(modelStore.activeContextSettings?.n_batch).toBe(512);
+
+      modelStore.saveModelInitProfileSettings(
+        model.id,
+        {
+          ...modelStore.contextInitParams,
+          n_batch: 128,
+          n_ubatch: 128,
+        },
+        true,
+        'manual',
+        modelStore.contextInitParams.n_ctx,
+      );
+
+      await modelStore.initContext(model);
+
+      expect((firstContext as any).release).toHaveBeenCalled();
+      expect(initLlamaMock).toHaveBeenCalledTimes(2);
+      expect(initLlamaMock).toHaveBeenLastCalledWith(
+        expect.objectContaining({
+          n_batch: 128,
+          n_ubatch: 128,
+        }),
+        expect.any(Function),
+      );
+      expect(modelStore.activeContextSettings?.n_batch).toBe(128);
+    });
+
     it('uses a fresh default profile when switching to a model without a saved profile', async () => {
       const {initLlama} = require('llama.rn');
       const initLlamaMock = initLlama as jest.Mock;
@@ -2560,7 +2789,72 @@ describe('ModelStore', () => {
       }
     });
 
-    it('uses requested boundary iOS context while keeping memory safeguards', async () => {
+    it('strips the app-level iOS Metal marker before native init', async () => {
+      const savedOS = Platform.OS;
+      Platform.OS = 'ios';
+      modelStore.contextInitParams = {
+        ...modelStore.contextInitParams,
+        devices: ['Metal'],
+        no_gpu_devices: false,
+        n_gpu_layers: 99,
+      };
+
+      try {
+        const effective = await modelStore.getEffectiveContextInitParams();
+
+        expect(effective.devices).toBeUndefined();
+        expect(effective.n_gpu_layers).toBeGreaterThan(0);
+      } finally {
+        Platform.OS = savedOS;
+      }
+    });
+
+    it('persists the native backend snapshot after local init', async () => {
+      const savedOS = Platform.OS;
+      Platform.OS = 'ios';
+      const {initLlama} = require('llama.rn');
+      const initLlamaMock = initLlama as jest.Mock;
+      initLlamaMock.mockReset();
+      initLlamaMock.mockResolvedValue({
+        ...(createMockLoadedContext() as any),
+        gpu: true,
+        devices: ['Apple A16 GPU'],
+        reasonNoGPU: '',
+        systemInfo: 'llama system info',
+      });
+      modelStore.contextInitParams = {
+        ...modelStore.contextInitParams,
+        devices: ['Metal'],
+        no_gpu_devices: false,
+        n_gpu_layers: 99,
+      };
+
+      try {
+        await modelStore.initContext(presetModelFixture);
+
+        expect(modelStore.lastNativeBackendSnapshot).toEqual(
+          expect.objectContaining({
+            modelId: presetModelFixture.id,
+            requestedBackend: 'metal',
+            effectiveBackend: 'metal',
+            gpu: true,
+            devices: ['Apple A16 GPU'],
+            reasonNoGPU: undefined,
+            systemInfo: 'llama system info',
+          }),
+        );
+        expect(
+          modelStore.lastNativeBackendSnapshot?.initSettings.devices,
+        ).toBeUndefined();
+        expect(
+          modelStore.lastNativeBackendSnapshot?.initSettings.n_gpu_layers,
+        ).toBeGreaterThan(0);
+      } finally {
+        Platform.OS = savedOS;
+      }
+    });
+
+    it('uses requested boundary iOS context and batch while keeping mmap safeguards', async () => {
       const savedOS = Platform.OS;
       Platform.OS = 'ios';
       modelStore.contextInitParams = {
@@ -2587,12 +2881,12 @@ describe('ModelStore', () => {
         );
 
         expect(effective.n_ctx).toBe(100000);
-        expect(effective.n_batch).toBe(128);
-        expect(effective.n_ubatch).toBe(128);
+        expect(effective.n_batch).toBe(2048);
+        expect(effective.n_ubatch).toBe(1024);
         expect(effective.use_mmap).toBe(true);
         expect(effective.use_mlock).toBe(false);
-        expect(effective.no_extra_bufts).toBe(true);
-        expect(effective.warmup).toBe(false);
+        expect(effective.no_extra_bufts).toBe(false);
+        expect(effective.warmup).toBeUndefined();
       } finally {
         Platform.OS = savedOS;
       }
@@ -2625,14 +2919,57 @@ describe('ModelStore', () => {
         );
 
         expect(effective.n_ctx).toBe(50000);
-        expect(effective.n_batch).toBe(128);
-        expect(effective.n_ubatch).toBe(128);
+        expect(effective.n_batch).toBe(2048);
+        expect(effective.n_ubatch).toBe(1024);
         expect(effective.use_mmap).toBe(true);
         expect(effective.use_mlock).toBe(false);
-        expect(effective.no_extra_bufts).toBe(true);
-        expect(effective.warmup).toBe(false);
+        expect(effective.no_extra_bufts).toBe(false);
+        expect(effective.warmup).toBeUndefined();
       } finally {
         modelStore.setAllowUnsafeContextLimits(false);
+        Platform.OS = savedOS;
+      }
+    });
+
+    it('only raises iOS Metal batch values when dynamic batch tuning is enabled', async () => {
+      const savedOS = Platform.OS;
+      Platform.OS = 'ios';
+      const model = {
+        id: 'bonsai',
+        name: 'Ternary Bonsai 8B',
+        params: 8_188_548_096,
+        size: 2_182_184_672,
+        ggufMetadata: {context_length: 65536},
+      } as any;
+      modelStore.contextInitParams = {
+        ...modelStore.contextInitParams,
+        n_ctx: 8192,
+        n_batch: 128,
+        n_ubatch: 128,
+        n_gpu_layers: 99,
+        no_gpu_devices: false,
+      };
+
+      try {
+        modelStore.dynamicMetalBatchTuning = false;
+        const preserved = await modelStore.getEffectiveContextInitParams(
+          '/tmp/Ternary-Bonsai-8B-PQ2_0.gguf',
+          model,
+        );
+
+        expect(preserved.n_batch).toBe(128);
+        expect(preserved.n_ubatch).toBe(128);
+
+        modelStore.dynamicMetalBatchTuning = true;
+        const tuned = await modelStore.getEffectiveContextInitParams(
+          '/tmp/Ternary-Bonsai-8B-PQ2_0.gguf',
+          model,
+        );
+
+        expect(tuned.n_batch).toBe(256);
+        expect(tuned.n_ubatch).toBe(256);
+      } finally {
+        modelStore.dynamicMetalBatchTuning = false;
         Platform.OS = savedOS;
       }
     });
@@ -3972,6 +4309,7 @@ describe('ModelStore', () => {
       runInAction(() => {
         modelStore.context = mockContext;
         modelStore.activeModelId = model.id;
+        modelStore.activeContextSettings = {...modelStore.contextInitParams};
       });
 
       initLlamaMock.mockReset();

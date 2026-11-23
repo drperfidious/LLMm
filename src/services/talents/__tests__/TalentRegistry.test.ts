@@ -59,7 +59,9 @@ describe('TalentRegistry', () => {
       expect(talentRegistry.has('workspace_list')).toBe(true);
       expect(talentRegistry.has('workspace_read')).toBe(true);
       expect(talentRegistry.has('workspace_write')).toBe(true);
+      expect(talentRegistry.has('workspace_mkdir')).toBe(true);
       expect(talentRegistry.has('workspace_delete')).toBe(true);
+      expect(talentRegistry.has('workspace_prune_empty_dirs')).toBe(true);
       expect(talentRegistry.has('workspace_search')).toBe(true);
       expect(talentRegistry.has('workspace_shell')).toBe(true);
       expect(talentRegistry.has('calendar_find_events')).toBe(true);
@@ -67,6 +69,12 @@ describe('TalentRegistry', () => {
       expect(talentRegistry.has('reminder_find')).toBe(true);
       expect(talentRegistry.has('reminder_create')).toBe(true);
       expect(talentRegistry.has('reminder_complete')).toBe(true);
+      expect(talentRegistry.has('reminder_delete')).toBe(true);
+      expect(talentRegistry.has('clock_list')).toBe(true);
+      expect(talentRegistry.has('clock_create_timer')).toBe(true);
+      expect(talentRegistry.has('clock_create_alarm')).toBe(true);
+      expect(talentRegistry.has('clock_cancel')).toBe(true);
+      expect(talentRegistry.has('clock_stop')).toBe(true);
     });
 
     it('is idempotent across calls', () => {
@@ -87,7 +95,9 @@ describe('TalentRegistry', () => {
       expect(talentRegistry.has('workspace_list')).toBe(true);
       expect(talentRegistry.has('workspace_read')).toBe(true);
       expect(talentRegistry.has('workspace_write')).toBe(true);
+      expect(talentRegistry.has('workspace_mkdir')).toBe(true);
       expect(talentRegistry.has('workspace_delete')).toBe(true);
+      expect(talentRegistry.has('workspace_prune_empty_dirs')).toBe(true);
       expect(talentRegistry.has('workspace_search')).toBe(true);
       expect(talentRegistry.has('workspace_shell')).toBe(true);
       expect(talentRegistry.has('calendar_find_events')).toBe(true);
@@ -95,6 +105,12 @@ describe('TalentRegistry', () => {
       expect(talentRegistry.has('reminder_find')).toBe(true);
       expect(talentRegistry.has('reminder_create')).toBe(true);
       expect(talentRegistry.has('reminder_complete')).toBe(true);
+      expect(talentRegistry.has('reminder_delete')).toBe(true);
+      expect(talentRegistry.has('clock_list')).toBe(true);
+      expect(talentRegistry.has('clock_create_timer')).toBe(true);
+      expect(talentRegistry.has('clock_create_alarm')).toBe(true);
+      expect(talentRegistry.has('clock_cancel')).toBe(true);
+      expect(talentRegistry.has('clock_stop')).toBe(true);
     });
 
     it('re-registers after reset + resetRegisteredFlag', () => {
@@ -116,7 +132,9 @@ describe('TalentRegistry', () => {
       expect(talentRegistry.has('workspace_list')).toBe(true);
       expect(talentRegistry.has('workspace_read')).toBe(true);
       expect(talentRegistry.has('workspace_write')).toBe(true);
+      expect(talentRegistry.has('workspace_mkdir')).toBe(true);
       expect(talentRegistry.has('workspace_delete')).toBe(true);
+      expect(talentRegistry.has('workspace_prune_empty_dirs')).toBe(true);
       expect(talentRegistry.has('workspace_search')).toBe(true);
       expect(talentRegistry.has('workspace_shell')).toBe(true);
       expect(talentRegistry.has('calendar_find_events')).toBe(true);
@@ -124,6 +142,12 @@ describe('TalentRegistry', () => {
       expect(talentRegistry.has('reminder_find')).toBe(true);
       expect(talentRegistry.has('reminder_create')).toBe(true);
       expect(talentRegistry.has('reminder_complete')).toBe(true);
+      expect(talentRegistry.has('reminder_delete')).toBe(true);
+      expect(talentRegistry.has('clock_list')).toBe(true);
+      expect(talentRegistry.has('clock_create_timer')).toBe(true);
+      expect(talentRegistry.has('clock_create_alarm')).toBe(true);
+      expect(talentRegistry.has('clock_cancel')).toBe(true);
+      expect(talentRegistry.has('clock_stop')).toBe(true);
     });
   });
 });

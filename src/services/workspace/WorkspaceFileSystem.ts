@@ -7,7 +7,12 @@ import {
   normalizeWorkspacePath,
   resolveWorkspacePath,
 } from './pathUtils';
-import {pathWithInferredTextExtension} from './documentUtils';
+import {
+  isPdfWorkspacePath,
+  isReadableWorkspacePath,
+  pathWithInferredTextExtension,
+} from './documentUtils';
+import {extractPdfText} from './PdfTextExtractor';
 
 const DEFAULT_MAX_READ_BYTES = 96 * 1024;
 const DEFAULT_MAX_WRITE_BYTES = 512 * 1024;
@@ -44,6 +49,10 @@ export type WorkspaceImportResult = {
 export type WorkspaceDeleteResult = {
   path: string;
   type: 'file' | 'directory';
+};
+
+export type WorkspaceDirectoryCleanupResult = {
+  deleted: WorkspaceEntry[];
 };
 
 export type WorkspaceStatResult = {
@@ -192,6 +201,121 @@ export class WorkspaceFileSystem {
     });
   }
 
+  async listDirectories(
+    path = '',
+    cwd = '',
+    options: {maxEntries?: number; includeRoot?: boolean} = {},
+  ): Promise<WorkspaceEntry[]> {
+    const maxEntries = options.maxEntries ?? 500;
+    const includeRoot = options.includeRoot ?? false;
+    await this.ensureRoot();
+    const {relativePath, absolutePath} = this.resolve(path, cwd);
+    const directories: WorkspaceEntry[] = [];
+
+    const addDirectory = (rel: string) => {
+      if (directories.length >= maxEntries) {
+        return;
+      }
+      directories.push({
+        name: basename(rel) || '/',
+        path: displayWorkspacePath(rel),
+        type: 'directory',
+        size: 0,
+        modifiedAt: undefined,
+      });
+    };
+
+    if (includeRoot) {
+      addDirectory(relativePath);
+    }
+
+    const visit = async (abs: string, rel: string): Promise<void> => {
+      if (directories.length >= maxEntries) {
+        return;
+      }
+      const entries = await RNFS.readDir(abs);
+      for (const entry of entries) {
+        if (directories.length >= maxEntries) {
+          break;
+        }
+        if (!entry.isDirectory()) {
+          continue;
+        }
+        const entryRel = normalizeWorkspacePath(
+          [rel, entry.name].filter(Boolean).join('/'),
+        );
+        directories.push({
+          name: entry.name,
+          path: displayWorkspacePath(entryRel),
+          type: 'directory',
+          size: entry.size ?? 0,
+          modifiedAt: toIso(entry.mtime),
+        });
+        await visit(entry.path, entryRel);
+      }
+    };
+
+    await visit(absolutePath, relativePath);
+    return directories.sort((a, b) => a.path.localeCompare(b.path));
+  }
+
+  async listEmptyDirectories(
+    path = '',
+    cwd = '',
+    options: {maxEntries?: number} = {},
+  ): Promise<WorkspaceEntry[]> {
+    const maxEntries = options.maxEntries ?? 500;
+    await this.ensureRoot();
+    const {relativePath, absolutePath} = this.resolve(path, cwd);
+    const emptyDirectories: WorkspaceEntry[] = [];
+
+    const visit = async (abs: string, rel: string): Promise<boolean> => {
+      const entries = await RNFS.readDir(abs);
+      let hasFile = false;
+      let allChildDirectoriesEmpty = true;
+
+      for (const entry of entries) {
+        const entryRel = normalizeWorkspacePath(
+          [rel, entry.name].filter(Boolean).join('/'),
+        );
+        if (entry.isDirectory()) {
+          const childEmpty = await visit(entry.path, entryRel);
+          if (!childEmpty) {
+            allChildDirectoriesEmpty = false;
+          }
+          continue;
+        }
+        hasFile = true;
+      }
+
+      const isEmptyAfterPrune = !hasFile && allChildDirectoriesEmpty;
+      if (
+        isEmptyAfterPrune &&
+        rel &&
+        rel !== relativePath &&
+        emptyDirectories.length < maxEntries
+      ) {
+        emptyDirectories.push({
+          name: basename(rel),
+          path: displayWorkspacePath(rel),
+          type: 'directory',
+          size: 0,
+        });
+      }
+      return isEmptyAfterPrune;
+    };
+
+    await visit(absolutePath, relativePath);
+    return emptyDirectories.sort((a, b) => {
+      const depthA = a.path.split('/').length;
+      const depthB = b.path.split('/').length;
+      if (depthA !== depthB) {
+        return depthB - depthA;
+      }
+      return a.path.localeCompare(b.path);
+    });
+  }
+
   async assertDirectory(path = '', cwd = ''): Promise<string> {
     await this.ensureRoot();
     const {relativePath, absolutePath} = this.resolve(path, cwd);
@@ -229,6 +353,25 @@ export class WorkspaceFileSystem {
     const stat = await RNFS.stat(absolutePath);
     if (stat.isDirectory()) {
       throw new Error(`${displayWorkspacePath(relativePath)} is a directory`);
+    }
+    if (isPdfWorkspacePath(relativePath)) {
+      const pdf = await extractPdfText(absolutePath, maxBytes);
+      const text = pdf.text.trim()
+        ? [
+            `PDF pages: ${pdf.pageCount}`,
+            pdf.truncated ? 'PDF text truncated to fit the read limit.' : '',
+            '',
+            pdf.text,
+          ]
+            .filter(Boolean)
+            .join('\n')
+        : `PDF pages: ${pdf.pageCount}\n\nNo selectable text was found in this PDF.`;
+      return {
+        path: displayWorkspacePath(relativePath),
+        content: text,
+        size: stat.size,
+        truncated: pdf.truncated,
+      };
     }
     if (stat.size > maxBytes) {
       throw new Error(
@@ -438,6 +581,27 @@ export class WorkspaceFileSystem {
     };
   }
 
+  async deleteEmptyDirectories(
+    path = '',
+    cwd = '',
+    options: {maxEntries?: number} = {},
+  ): Promise<WorkspaceDirectoryCleanupResult> {
+    const candidates = await this.listEmptyDirectories(path, cwd, options);
+    const deleted: WorkspaceEntry[] = [];
+
+    for (const entry of candidates) {
+      try {
+        await this.deletePath(entry.path);
+        deleted.push(entry);
+      } catch {
+        // A concurrent write can make a previously empty directory non-empty.
+        // Leave it in place instead of widening the deletion scope.
+      }
+    }
+
+    return {deleted};
+  }
+
   async getAvailablePath(
     preferredPath: string,
     cwd = '',
@@ -511,10 +675,15 @@ export class WorkspaceFileSystem {
         }
         return;
       }
-      if (stat.size > maxFileBytes) {
+      if (!isReadableWorkspacePath(rel)) {
         return;
       }
-      const content = await RNFS.readFile(abs, 'utf8');
+      if (!isPdfWorkspacePath(rel) && stat.size > maxFileBytes) {
+        return;
+      }
+      const content = isPdfWorkspacePath(rel)
+        ? (await this.readFile(rel, '', maxFileBytes)).content
+        : await RNFS.readFile(abs, 'utf8');
       const lines = content.split(/\r?\n/);
       lines.forEach((line, index) => {
         if (matches.length >= maxResults) {

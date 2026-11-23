@@ -460,6 +460,173 @@ describe('runAgent', () => {
     expect(tcf.outcome.responseContent).toMatch(/must be a JSON object/);
   });
 
+  it('repairs raw newlines inside JSON string tool arguments', async () => {
+    const rawNewlineArgs =
+      '{"path":"guide.md","content":"# Python Basics\n\nUse lists and code examples."}';
+    const engine = makeScriptedEngine({
+      scripts: [
+        {
+          tokens: [],
+          result: {
+            text: '',
+            content: '',
+            tool_calls: [
+              {
+                id: 'c0',
+                type: 'function',
+                function: {name: 'workspace_write', arguments: rawNewlineArgs},
+              },
+            ],
+          },
+        },
+        {
+          tokens: [{content: 'done'}],
+          result: {text: 'done', content: 'done'},
+        },
+      ],
+    });
+    const execute = jest.fn(() => ({
+      type: 'text' as const,
+      summary: 'Wrote guide.md',
+    }));
+    const workspaceWrite = makeTalent('workspace_write', execute);
+
+    await collect(
+      runAgent({
+        engine,
+        initialParams: baseParams,
+        allowedTalentNames: ['workspace_write'],
+        talentLookup: name =>
+          name === 'workspace_write' ? workspaceWrite : undefined,
+        messageId: 'msg',
+        triggerMarkers: [],
+      }),
+    );
+
+    expect(execute).toHaveBeenCalledWith({
+      path: 'guide.md',
+      content: '# Python Basics\n\nUse lists and code examples.',
+    });
+  });
+
+  it('repairs JSON5-style object tool arguments', async () => {
+    const engine = makeScriptedEngine({
+      scripts: [
+        {
+          tokens: [],
+          result: {
+            text: '',
+            content: '',
+            tool_calls: [
+              {
+                id: 'c0',
+                type: 'function',
+                function: {
+                  name: 'workspace_write',
+                  arguments: "{path:'notes.md',lines:['# Notes',],}",
+                },
+              },
+            ],
+          },
+        },
+        {
+          tokens: [{content: 'done'}],
+          result: {text: 'done', content: 'done'},
+        },
+      ],
+    });
+    const execute = jest.fn(() => ({
+      type: 'text' as const,
+      summary: 'Wrote notes.md',
+    }));
+    const workspaceWrite = makeTalent('workspace_write', execute);
+
+    await collect(
+      runAgent({
+        engine,
+        initialParams: baseParams,
+        allowedTalentNames: ['workspace_write'],
+        talentLookup: name =>
+          name === 'workspace_write' ? workspaceWrite : undefined,
+        messageId: 'msg',
+        triggerMarkers: [],
+      }),
+    );
+
+    expect(execute).toHaveBeenCalledWith({
+      path: 'notes.md',
+      lines: ['# Notes'],
+    });
+  });
+
+  it('removes malformed tool arguments from follow-up context', async () => {
+    const malformedArgs =
+      '{"path":"python_basics.md","content":"' + 'x'.repeat(5000);
+    const engine = makeScriptedEngine({
+      scripts: [
+        {
+          tokens: [],
+          result: {
+            text: '',
+            content: '',
+            tool_calls: [
+              {
+                id: 'c0',
+                type: 'function',
+                function: {
+                  name: 'workspace_write',
+                  arguments: malformedArgs,
+                },
+              },
+            ],
+          },
+        },
+        {
+          tokens: [{content: 'retry smaller'}],
+          result: {text: 'retry smaller', content: 'retry smaller'},
+        },
+      ],
+    });
+    const execute = jest.fn(() => ({
+      type: 'text' as const,
+      summary: 'should not run',
+    }));
+    const workspaceWrite = makeTalent('workspace_write', execute);
+
+    const events = await collect(
+      runAgent({
+        engine,
+        initialParams: baseParams,
+        allowedTalentNames: ['workspace_write'],
+        talentLookup: name =>
+          name === 'workspace_write' ? workspaceWrite : undefined,
+        messageId: 'msg',
+        triggerMarkers: [],
+      }),
+    );
+
+    expect(execute).not.toHaveBeenCalled();
+    const finished = events.find(
+      (e): e is Extract<AgentEvent, {type: 'tool_call_finished'}> =>
+        e.type === 'tool_call_finished',
+    );
+    expect(finished?.outcome.responseContent).toContain(
+      'removed from follow-up context',
+    );
+
+    expect(engine.completion).toHaveBeenCalledTimes(2);
+    const secondTurnParams = (engine.completion as jest.Mock).mock
+      .calls[1][0] as ApiCompletionParams;
+    const secondTurnMessages = secondTurnParams.messages as any[];
+    const assistantMessage = secondTurnMessages.find(
+      message => message.role === 'assistant' && message.tool_calls,
+    );
+    expect(assistantMessage.tool_calls[0].function.arguments).toContain(
+      'invalid_json_arguments',
+    );
+    expect(JSON.stringify(secondTurnMessages)).not.toContain('x'.repeat(1000));
+  });
+
   it('#7 unknown talent (not in registry) → outcome.result.type === error', async () => {
     const engine = makeScriptedEngine({
       scripts: [

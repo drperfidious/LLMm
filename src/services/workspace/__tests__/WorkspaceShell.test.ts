@@ -97,6 +97,30 @@ describe('WorkspaceShell', () => {
     expect(fs.list).toHaveBeenCalledWith('.', '');
   });
 
+  it('removes empty directories with rmdir only after verifying contents', async () => {
+    const fs = makeFs();
+    fs.list.mockResolvedValueOnce([]);
+    const shell = new WorkspaceShell(fs as any);
+
+    const result = await shell.execute('rmdir empty', '/');
+
+    expect(result.ok).toBe(true);
+    expect(result.output).toBe('Deleted /empty');
+    expect(fs.list).toHaveBeenCalledWith('empty', '');
+    expect(fs.deletePath).toHaveBeenCalledWith('empty', '');
+  });
+
+  it('refuses rmdir on non-empty directories', async () => {
+    const fs = makeFs();
+    const shell = new WorkspaceShell(fs as any);
+
+    const result = await shell.execute('rmdir docs', '/');
+
+    expect(result.ok).toBe(false);
+    expect(result.error).toContain('only removes empty directories');
+    expect(fs.deletePath).not.toHaveBeenCalled();
+  });
+
   it('changes cwd only through the returned shell result', async () => {
     const fs = makeFs();
     const shell = new WorkspaceShell(fs as any);

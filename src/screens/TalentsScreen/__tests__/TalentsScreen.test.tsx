@@ -1,5 +1,6 @@
 import React from 'react';
 import * as Keychain from 'react-native-keychain';
+import {NativeModules, Platform} from 'react-native';
 
 import {fireEvent, render, waitFor} from '../../../../jest/test-utils';
 import {l10n} from '../../../locales';
@@ -13,6 +14,14 @@ import {talentStore} from '../../../store/TalentStore';
 import {TalentsScreen} from '../TalentsScreen';
 
 const originalFetch = (global as any).fetch;
+const originalNativeMailModule = (NativeModules as any).NativeMailModule;
+
+const nativeMail = {
+  check: jest.fn(),
+  search: jest.fn(),
+  read: jest.fn(),
+  send: jest.fn(),
+};
 
 const renderScreen = () =>
   render(
@@ -34,12 +43,23 @@ describe('TalentsScreen', () => {
     talentStore.resetWebSearchSettings();
     talentStore.resetMailBridgeSettings();
     (Keychain.getGenericPassword as jest.Mock).mockResolvedValue(false);
+    Object.defineProperty(Platform, 'OS', {
+      configurable: true,
+      get: () => 'ios',
+    });
+    (NativeModules as any).NativeMailModule = nativeMail;
+    nativeMail.check.mockResolvedValue({
+      ok: true,
+      provider: 'native-gmail',
+      capabilities: ['search', 'read', 'send'],
+    });
   });
 
   afterAll(() => {
     talentRegistry.reset();
     resetRegisteredFlag();
     (global as any).fetch = originalFetch;
+    (NativeModules as any).NativeMailModule = originalNativeMailModule;
   });
 
   it('renders installed talents and web search configuration', async () => {
@@ -173,10 +193,7 @@ describe('TalentsScreen', () => {
   it('configures Gmail mail settings and stores app password in Keychain', async () => {
     const {getByTestId, getByText} = renderScreen();
 
-    fireEvent.changeText(
-      getByTestId('talents-mail-endpoint-input'),
-      ' https://mail.example ',
-    );
+    expect(() => getByTestId('talents-mail-endpoint-input')).toThrow();
     fireEvent.changeText(
       getByTestId('talents-mail-account-input'),
       ' user@example.com ',
@@ -213,7 +230,7 @@ describe('TalentsScreen', () => {
     expect(talentStore.mailBridgeSettings).toEqual(
       expect.objectContaining({
         provider: 'gmail',
-        endpoint: 'https://mail.example',
+        endpoint: '',
         accountEmail: 'user@example.com',
         username: 'login@example.com',
         imapHost: 'imap.gmail.com',
@@ -240,6 +257,7 @@ describe('TalentsScreen', () => {
     });
     const {getByTestId, getByText} = renderScreen();
 
+    fireEvent.press(getByText('Bridge'));
     fireEvent.changeText(
       getByTestId('talents-mail-endpoint-input'),
       ' https://mail.example ',
@@ -249,10 +267,65 @@ describe('TalentsScreen', () => {
     await waitFor(() => {
       expect((global as any).fetch).toHaveBeenCalledWith(
         'https://mail.example/mail/status',
-        expect.objectContaining({method: 'POST'}),
+        expect.objectContaining({method: 'GET'}),
       );
     });
     expect(getByText(/Capabilities: search, read, send/)).toBeTruthy();
+  });
+
+  it('tests Gmail direct mail without a bridge endpoint', async () => {
+    (Keychain.getGenericPassword as jest.Mock).mockResolvedValue({
+      username: 'mail_bridge_token',
+      password: 'app-password',
+    });
+    const {getByTestId, getByText} = renderScreen();
+
+    await waitFor(() => {
+      expect(getByTestId('talents-mail-status').props.children).toBe(
+        'Needs account',
+      );
+    });
+
+    fireEvent.changeText(
+      getByTestId('talents-mail-account-input'),
+      ' user@gmail.com ',
+    );
+    fireEvent.changeText(
+      getByTestId('talents-mail-username-input'),
+      ' user@gmail.com ',
+    );
+
+    await waitFor(() => {
+      expect(getByTestId('talents-mail-status').props.children).toBe('Ready');
+    });
+
+    fireEvent.press(getByTestId('talents-mail-test'));
+
+    await waitFor(() => {
+      expect(nativeMail.check).toHaveBeenCalledWith(
+        expect.objectContaining({
+          accountEmail: 'user@gmail.com',
+          mailProvider: 'gmail',
+          mailAuth: expect.objectContaining({password: 'app-password'}),
+        }),
+      );
+    });
+    expect(getByText(/Direct mail ok/)).toBeTruthy();
+  });
+
+  it('warns when the bridge endpoint is an IMAP host instead of a bridge', async () => {
+    const {getByTestId, getByText} = renderScreen();
+
+    fireEvent.press(getByText('Bridge'));
+    fireEvent.changeText(
+      getByTestId('talents-mail-endpoint-input'),
+      'imap.gmail.com',
+    );
+
+    expect(getByText(/looks like an IMAP\/SMTP mail server/)).toBeTruthy();
+    expect(getByTestId('talents-mail-test').props.accessibilityState).toEqual(
+      expect.objectContaining({disabled: true}),
+    );
   });
 
   it('creates a custom talent that appears in the installed list', async () => {

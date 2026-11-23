@@ -22,8 +22,14 @@ export async function inferBackendType(
     const primaryDevice = devices[0];
     const deviceLower = primaryDevice.toLowerCase();
 
-    // Metal backend (iOS)
-    if (deviceLower === 'metal') {
+    // Metal backend (iOS). llama.rn exposes the concrete Metal device name
+    // from MTLDevice, e.g. "Apple A16 GPU", not only the literal "Metal".
+    if (
+      Platform.OS === 'ios' &&
+      (deviceLower === 'metal' ||
+        deviceLower.includes('metal') ||
+        deviceLower.includes('gpu'))
+    ) {
       return 'metal';
     }
 
@@ -125,7 +131,8 @@ export function isTurboCachePairSafe(
   ) {
     return {
       safe: false,
-      reason: 'TurboQuant cache pairs must use f16, q8_0, turbo2, turbo3, or turbo4',
+      reason:
+        'TurboQuant cache pairs must use f16, q8_0, turbo2, turbo3, or turbo4',
     };
   }
 
@@ -288,7 +295,11 @@ export function isCacheTypeKSafe(
     }
   }
 
-  if (isTurboCacheType(cacheTypeK) && backend !== 'metal' && backend !== 'cpu') {
+  if (
+    isTurboCacheType(cacheTypeK) &&
+    backend !== 'metal' &&
+    backend !== 'cpu'
+  ) {
     return {
       safe: false,
       reason: 'TurboQuant cache is only enabled for Metal/CPU in this fork',

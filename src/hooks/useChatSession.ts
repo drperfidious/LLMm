@@ -170,6 +170,7 @@ const prepareCompletion = async ({
         .map(tool => tool.function?.name)
         .filter((name): name is string => typeof name === 'string' && !!name),
     ),
+    workspaceCwd: chatSessionStore.workspaceCwd,
   });
 
   const messages = [

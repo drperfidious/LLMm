@@ -15,12 +15,22 @@ export interface DeviceOption {
   description: string;
   devices?: string[]; // undefined for auto-select or CPU
   n_gpu_layers: number;
+  no_gpu_devices?: boolean;
   default_flash_attn_type: 'auto' | 'on' | 'off'; // Default/recommended flash attention setting
   valid_flash_attn_types: Array<'auto' | 'on' | 'off'>; // All valid flash attention values for this device
   tag?: 'Recommended' | 'Fastest' | 'Stable' | 'Compatible' | 'Experimental';
   experimental?: boolean;
   platform: 'ios' | 'android' | 'both';
   deviceInfo?: NativeBackendDeviceInfo; // Original device info from llama.rn
+}
+
+export function isIOSMetalDeviceName(deviceName?: string): boolean {
+  const normalized = deviceName?.toLowerCase() ?? '';
+  return (
+    normalized === 'metal' ||
+    normalized.includes('metal') ||
+    normalized.includes('gpu')
+  );
 }
 
 /**
@@ -59,31 +69,32 @@ export async function getDeviceOptions(): Promise<DeviceOption[]> {
     options.push({
       id: 'auto',
       label: 'Auto',
-      description: 'Safely selects Metal or CPU based on device budget',
+      description: 'Lets the native backend choose Metal or CPU',
       devices: undefined,
       n_gpu_layers: 99,
+      no_gpu_devices: false,
       default_flash_attn_type: 'auto',
       valid_flash_attn_types: ['auto', 'on', 'off'],
       tag: 'Recommended',
       platform: 'ios',
     });
 
-    // Option 2: Metal GPU. llama.rn resolves explicit devices by exact
-    // `lm_ggml_backend_dev_name()` match, and on iOS that name comes from
-    // `[MTLDevice name]` rather than the literal "Metal" alias.
-    if (metalDev?.deviceName) {
-      options.push({
-        id: 'gpu',
-        label: 'Metal',
-        description: 'Use Metal acceleration with device-safe layer caps',
-        devices: [metalDev.deviceName],
-        n_gpu_layers: 99,
-        default_flash_attn_type: 'auto',
-        valid_flash_attn_types: ['auto', 'on', 'off'],
-        platform: 'ios',
-        deviceInfo: metalDev,
-      });
-    }
+    // Option 2: Metal GPU. Store a stable app-level "Metal" marker instead
+    // of a hardware-specific "Apple A16 GPU" style name. ModelStore strips
+    // this marker before native init so llama.cpp auto-selects the real Metal
+    // device, while Settings/Profile UI can still show a durable Metal state.
+    options.push({
+      id: 'gpu',
+      label: 'Metal',
+      description: 'Use Metal acceleration with your selected layer settings',
+      devices: ['Metal'],
+      n_gpu_layers: 99,
+      no_gpu_devices: false,
+      default_flash_attn_type: 'auto',
+      valid_flash_attn_types: ['auto', 'on', 'off'],
+      platform: 'ios',
+      deviceInfo: metalDev,
+    });
 
     // Option 3: CPU only (n_gpu_layers: 0)
     // CPU supports all flash attention types
@@ -93,6 +104,7 @@ export async function getDeviceOptions(): Promise<DeviceOption[]> {
       description: 'CPU only (slower, for testing or compatibility)',
       devices: ['CPU'],
       n_gpu_layers: 0,
+      no_gpu_devices: true,
       default_flash_attn_type: 'auto',
       valid_flash_attn_types: ['auto', 'on', 'off'],
       platform: 'ios',

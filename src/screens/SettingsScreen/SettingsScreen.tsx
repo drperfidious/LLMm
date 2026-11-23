@@ -60,11 +60,16 @@ import {
 import {t} from '../../locales';
 import {checkGpuSupport} from '../../utils/deviceCapabilities';
 import {exportLegacyChatSessions} from '../../utils/exportUtils';
-import {getDeviceOptions, DeviceOption} from '../../utils/deviceSelection';
+import {
+  getDeviceOptions,
+  DeviceOption,
+  isIOSMetalDeviceName,
+} from '../../utils/deviceSelection';
 import {
   inferBackendType,
   getAllowedCacheTypeKOptions,
   getAllowedCacheTypeVOptions,
+  isFlashAttnCachePairSafe,
 } from '../../utils/flashAttnCompatibility';
 
 // OpenCL documentation URL (not localized)
@@ -219,19 +224,83 @@ export const SettingsScreen: React.FC = observer(() => {
   const currentFlashAttnType =
     modelStore.contextInitParams.flash_attn_type ??
     (Platform.OS === 'ios' ? 'auto' : 'off');
+  const currentFlashAttnSelection = currentFlashAttnType as
+    | 'auto'
+    | 'on'
+    | 'off';
+
+  const isCachePairSafe = (
+    cacheTypeK: CacheType | string,
+    cacheTypeV: CacheType | string,
+  ) =>
+    isFlashAttnCachePairSafe(
+      cacheTypeK,
+      cacheTypeV,
+      currentFlashAttnSelection,
+      currentBackend,
+    ).safe;
+
+  const enableMatchingPairSelections = <
+    T extends {
+      value: CacheType;
+      disabled: boolean;
+      reason?: string;
+    },
+  >(
+    options: T[],
+  ): T[] =>
+    options.map(option => {
+      if (!option.disabled || !isCachePairSafe(option.value, option.value)) {
+        return option;
+      }
+
+      return {
+        ...option,
+        disabled: false,
+        reason: undefined,
+      };
+    });
 
   // Get dynamic cache type options based on flash attention compatibility
-  const cacheTypeKOptions = getAllowedCacheTypeKOptions(
-    currentFlashAttnType as 'auto' | 'on' | 'off',
-    currentBackend,
-    modelStore.contextInitParams.cache_type_v,
+  const cacheTypeKOptions = enableMatchingPairSelections(
+    getAllowedCacheTypeKOptions(
+      currentFlashAttnSelection,
+      currentBackend,
+      modelStore.contextInitParams.cache_type_v,
+    ),
   );
 
-  const cacheTypeVOptions = getAllowedCacheTypeVOptions(
-    currentFlashAttnType as 'auto' | 'on' | 'off',
-    currentBackend,
-    modelStore.contextInitParams.cache_type_k,
+  const cacheTypeVOptions = enableMatchingPairSelections(
+    getAllowedCacheTypeVOptions(
+      currentFlashAttnSelection,
+      currentBackend,
+      modelStore.contextInitParams.cache_type_k,
+    ),
   );
+
+  const selectCacheTypeK = (cacheType: CacheType) => {
+    const currentV = modelStore.contextInitParams.cache_type_v;
+    if (isCachePairSafe(cacheType, currentV)) {
+      modelStore.setCacheTypeK(cacheType);
+      return;
+    }
+
+    if (isCachePairSafe(cacheType, cacheType)) {
+      modelStore.setCacheTypes(cacheType, cacheType);
+    }
+  };
+
+  const selectCacheTypeV = (cacheType: CacheType) => {
+    const currentK = modelStore.contextInitParams.cache_type_k;
+    if (isCachePairSafe(currentK, cacheType)) {
+      modelStore.setCacheTypeV(cacheType);
+      return;
+    }
+
+    if (isCachePairSafe(cacheType, cacheType)) {
+      modelStore.setCacheTypes(cacheType, cacheType);
+    }
+  };
 
   const getCacheTypeLabel = (
     value: CacheType | string,
@@ -250,13 +319,13 @@ export const SettingsScreen: React.FC = observer(() => {
       if (!devices || devices.length === 0) {
         return nGpuLayers === 0 ? 'cpu' : 'auto';
       }
-      if (devices[0] === 'Metal') {
-        return 'gpu';
-      }
       if (devices[0] === 'CPU') {
         return 'cpu';
       }
-      return 'auto';
+      if (isIOSMetalDeviceName(devices[0])) {
+        return 'gpu';
+      }
+      return nGpuLayers === 0 ? 'cpu' : 'auto';
     }
 
     // Android
@@ -275,6 +344,10 @@ export const SettingsScreen: React.FC = observer(() => {
 
   const handleDeviceSelect = (option: DeviceOption) => {
     modelStore.setDevices(option.devices);
+    modelStore.setNGPULayers(option.n_gpu_layers);
+    if (option.no_gpu_devices !== undefined) {
+      modelStore.setNoGpuDevices(option.no_gpu_devices);
+    }
 
     // Only update flash attention if current value is not valid for the selected device
     const currentFlashAttn =
@@ -690,7 +763,7 @@ export const SettingsScreen: React.FC = observer(() => {
                               disabled={option.disabled}
                               onPress={() => {
                                 if (!option.disabled) {
-                                  modelStore.setCacheTypeK(option.value);
+                                  selectCacheTypeK(option.value);
                                   setShowKeyCacheMenu(false);
                                 }
                               }}
@@ -759,7 +832,7 @@ export const SettingsScreen: React.FC = observer(() => {
                               disabled={option.disabled}
                               onPress={() => {
                                 if (!option.disabled) {
-                                  modelStore.setCacheTypeV(option.value);
+                                  selectCacheTypeV(option.value);
                                   setShowValueCacheMenu(false);
                                 }
                               }}
@@ -898,6 +971,33 @@ export const SettingsScreen: React.FC = observer(() => {
                     }
                   />
                 </View>
+                {Platform.OS === 'ios' && (
+                  <>
+                    <Divider />
+                    <View style={styles.switchContainer}>
+                      <View style={styles.textContainer}>
+                        <Text variant="titleMedium" style={styles.textLabel}>
+                          Dynamic Metal batch tuning
+                        </Text>
+                        <Text
+                          variant="labelSmall"
+                          style={styles.textDescription}>
+                          Off keeps your saved batch and physical batch values
+                          exactly. On lets LLMm raise low batch values for Metal
+                          loads when the model profile leaves performance on the
+                          table.
+                        </Text>
+                      </View>
+                      <Switch
+                        testID="dynamic-metal-batch-tuning-switch"
+                        value={modelStore.dynamicMetalBatchTuning}
+                        onValueChange={value =>
+                          modelStore.updateDynamicMetalBatchTuning(value)
+                        }
+                      />
+                    </View>
+                  </>
+                )}
               </View>
             </Card.Content>
           </Card>

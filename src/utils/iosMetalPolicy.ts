@@ -3,15 +3,16 @@ import {ContextParams} from 'llama.rn';
 
 import {MetalInfo} from '../specs/NativeHardwareInfo';
 import {ContextInitParams, Model} from './types';
-import {getModelMemoryRequirement} from './memoryEstimator';
-import {CURRENT_CONTEXT_INIT_PARAMS_VERSION} from './contextInitParamsVersions';
 
 const GIB = 1024 * 1024 * 1024;
 const MIB = 1024 * 1024;
-const SMALL_IOS_BATCH_CAP = 128;
-const METAL_WORKING_SET_HEADROOM = 0.72;
 const FULL_OFFLOAD_SENTINEL = 99;
 const A16_IPAD_DEVICE_IDS = new Set(['iPad15,7', 'iPad15,8']);
+const MODEL_REPEATING_WEIGHT_RATIO = 0.86;
+const MODEL_NON_REPEATING_WEIGHT_RATIO = 1 - MODEL_REPEATING_WEIGHT_RATIO;
+const METAL_TOTAL_MEMORY_RATIO = 0.72;
+const METAL_BUDGET_SAFETY_RATIO = 0.92;
+const METAL_FIXED_OVERHEAD_BYTES = 192 * MIB;
 
 export interface IOSMetalSafetyDecision {
   params: Partial<Omit<ContextParams, 'model'>>;
@@ -19,6 +20,7 @@ export interface IOSMetalSafetyDecision {
   effectiveGpuLayers: number;
   applied: boolean;
   reason?: string;
+  logLevel?: 'info' | 'warn';
 }
 
 function positiveIntegerOrFallback(value: unknown, fallback: number): number {
@@ -34,6 +36,44 @@ function isCPUDevice(devices?: string[]) {
 
 function isTurbo2Cache(cacheType: unknown): boolean {
   return String(cacheType ?? '').toLowerCase() === 'turbo2';
+}
+
+function finitePositiveNumber(value: unknown): number | undefined {
+  const numeric = Number(value);
+  return Number.isFinite(numeric) && numeric > 0 ? numeric : undefined;
+}
+
+function integerMetadataValue(value: unknown): number | undefined {
+  const numeric = finitePositiveNumber(value);
+  return numeric ? Math.floor(numeric) : undefined;
+}
+
+function kvCacheBytesPerElement(cacheType: unknown): number {
+  switch (String(cacheType ?? 'f16').toLowerCase()) {
+    case 'f32':
+      return 4;
+    case 'q8_0':
+      return 1.0625;
+    case 'q5_1':
+      return 0.75;
+    case 'q5_0':
+      return 0.6875;
+    case 'q4_1':
+      return 0.625;
+    case 'q4_0':
+    case 'iq4_nl':
+      return 0.5625;
+    case 'turbo4':
+      return 0.53125;
+    case 'turbo3':
+      return 0.390625;
+    case 'turbo2':
+      return 0.265625;
+    case 'bf16':
+    case 'f16':
+    default:
+      return 2;
+  }
 }
 
 function isConstrainedIpadTurbo2MetalDevice(args: {
@@ -90,6 +130,145 @@ function applyConstrainedIpadTurbo2Guard(args: {
   };
 }
 
+function getSafeMetalWorkingSetBudget(args: {
+  metalInfo?: MetalInfo | null;
+  totalMemoryBytes?: number | null;
+}): number | undefined {
+  const recommended = finitePositiveNumber(
+    args.metalInfo?.recommendedMaxWorkingSetSize,
+  );
+  const totalMemory = finitePositiveNumber(args.totalMemoryBytes);
+  const fallbackFromTotal = totalMemory
+    ? totalMemory * METAL_TOTAL_MEMORY_RATIO
+    : undefined;
+
+  const rawBudget =
+    recommended && fallbackFromTotal
+      ? Math.min(recommended, fallbackFromTotal)
+      : (recommended ?? fallbackFromTotal);
+
+  return rawBudget ? rawBudget * METAL_BUDGET_SAFETY_RATIO : undefined;
+}
+
+function estimateKVCacheBytes(
+  model: Model | undefined,
+  params: Partial<Omit<ContextParams, 'model'>>,
+): number {
+  const metadata = model?.ggufMetadata;
+  if (!metadata) {
+    return 0;
+  }
+
+  const nLayers = finitePositiveNumber(metadata.n_layers);
+  const nHeadKv = finitePositiveNumber(metadata.n_head_kv);
+  const nEmbdHeadK = finitePositiveNumber(metadata.n_embd_head_k);
+  const nEmbdHeadV = finitePositiveNumber(metadata.n_embd_head_v);
+  const nCtx = finitePositiveNumber((params as any).n_ctx);
+  if (!nLayers || !nHeadKv || !nEmbdHeadK || !nEmbdHeadV || !nCtx) {
+    return 0;
+  }
+
+  const slidingWindow = finitePositiveNumber(metadata.sliding_window);
+  const effectiveCtx = slidingWindow ? Math.min(nCtx, slidingWindow) : nCtx;
+  const bytesPerK = kvCacheBytesPerElement((params as any).cache_type_k);
+  const bytesPerV = kvCacheBytesPerElement((params as any).cache_type_v);
+
+  return (
+    nLayers *
+    effectiveCtx *
+    nHeadKv *
+    (nEmbdHeadK * bytesPerK + nEmbdHeadV * bytesPerV)
+  );
+}
+
+function estimateComputeBytes(
+  model: Model | undefined,
+  params: Partial<Omit<ContextParams, 'model'>>,
+): number {
+  const metadata = model?.ggufMetadata;
+  if (!metadata) {
+    return 0;
+  }
+
+  const nVocab = finitePositiveNumber(metadata.n_vocab);
+  const nEmbd = finitePositiveNumber(metadata.n_embd);
+  const nUBatch = finitePositiveNumber((params as any).n_ubatch);
+  if (!nVocab || !nEmbd || !nUBatch) {
+    return 0;
+  }
+
+  return (nVocab + nEmbd) * nUBatch * 4;
+}
+
+function resolveIOSMetalAutoGpuLayers(args: {
+  requestedGpuLayers: number;
+  params: Partial<Omit<ContextParams, 'model'>>;
+  model?: Model;
+  totalMemoryBytes?: number | null;
+  metalInfo?: MetalInfo | null;
+}): {effectiveGpuLayers: number; reason?: string; logLevel?: 'info' | 'warn'} {
+  if (args.requestedGpuLayers < FULL_OFFLOAD_SENTINEL) {
+    return {effectiveGpuLayers: args.requestedGpuLayers};
+  }
+
+  const nLayers = integerMetadataValue(args.model?.ggufMetadata?.n_layers);
+  if (!nLayers) {
+    return {effectiveGpuLayers: args.requestedGpuLayers};
+  }
+
+  const fullOffloadLayers = nLayers + 1;
+  const modelSize = finitePositiveNumber(args.model?.size);
+  const safeMetalBudget = getSafeMetalWorkingSetBudget({
+    metalInfo: args.metalInfo,
+    totalMemoryBytes: args.totalMemoryBytes,
+  });
+
+  if (!modelSize || !safeMetalBudget) {
+    return {
+      effectiveGpuLayers: fullOffloadLayers,
+      reason: `resolved Metal auto layers ${args.requestedGpuLayers} -> ${fullOffloadLayers}/${fullOffloadLayers} from GGUF layer count`,
+      logLevel: 'info',
+    };
+  }
+
+  const kvCacheBytes = estimateKVCacheBytes(args.model, args.params);
+  const computeBytes = estimateComputeBytes(args.model, args.params);
+  const fullOffloadEstimate =
+    modelSize + kvCacheBytes + computeBytes + METAL_FIXED_OVERHEAD_BYTES;
+
+  if (fullOffloadEstimate <= safeMetalBudget) {
+    return {
+      effectiveGpuLayers: fullOffloadLayers,
+      reason: `resolved Metal auto layers ${args.requestedGpuLayers} -> ${fullOffloadLayers}/${fullOffloadLayers} (full offload fits estimated working set)`,
+      logLevel: 'info',
+    };
+  }
+
+  const nonRepeatingBytes =
+    modelSize * MODEL_NON_REPEATING_WEIGHT_RATIO +
+    kvCacheBytes +
+    computeBytes +
+    METAL_FIXED_OVERHEAD_BYTES;
+  const repeatingLayerBytes =
+    (modelSize * MODEL_REPEATING_WEIGHT_RATIO) / nLayers;
+  const availableForRepeating = safeMetalBudget - nonRepeatingBytes;
+  const repeatingLayers = Math.floor(
+    Math.max(0, availableForRepeating) / repeatingLayerBytes,
+  );
+  const cappedRepeatingLayers = Math.min(nLayers, repeatingLayers);
+  const effectiveGpuLayers =
+    cappedRepeatingLayers > 0 ? cappedRepeatingLayers + 1 : 0;
+
+  return {
+    effectiveGpuLayers,
+    reason:
+      effectiveGpuLayers > 0
+        ? `resolved Metal auto layers ${args.requestedGpuLayers} -> ${effectiveGpuLayers}/${fullOffloadLayers} from estimated working set`
+        : `resolved Metal auto layers ${args.requestedGpuLayers} -> CPU fallback because estimated working set cannot fit one Metal layer`,
+    logLevel: effectiveGpuLayers > 0 ? 'info' : 'warn',
+  };
+}
+
 export function isIOSMetalRequested(
   params: Partial<Omit<ContextParams, 'model'>> | ContextInitParams,
 ): boolean {
@@ -103,168 +282,6 @@ export function isIOSMetalRequested(
     return false;
   }
   return positiveIntegerOrFallback((params as any).n_gpu_layers, 0) > 0;
-}
-
-function getLayerCount(model?: Model): number | undefined {
-  const layers = Number(model?.ggufMetadata?.n_layers);
-  return Number.isFinite(layers) && layers > 0 ? Math.floor(layers) : undefined;
-}
-
-function getSmallDeviceLayerCap(args: {
-  requestedGpuLayers: number;
-  model?: Model;
-  totalMemoryBytes?: number | null;
-}): {cap: number; reason?: string} {
-  const totalMemoryBytes = args.totalMemoryBytes ?? 0;
-  if (!Number.isFinite(totalMemoryBytes) || totalMemoryBytes <= 0) {
-    return {cap: args.requestedGpuLayers};
-  }
-
-  const ramGiB = totalMemoryBytes / GIB;
-  const modelSize = args.model?.size ?? 0;
-  const modelParams = args.model?.params ?? 0;
-  let cap = args.requestedGpuLayers;
-  const reasons: string[] = [];
-
-  if (ramGiB < 3.5) {
-    cap = Math.min(cap, 8);
-    reasons.push('<3.5 GiB RAM');
-  } else if (ramGiB < 4.25) {
-    cap = Math.min(cap, 16);
-    reasons.push('<4.25 GiB RAM');
-  } else if (ramGiB < 4.75) {
-    cap = Math.min(cap, 24);
-    reasons.push('<4.75 GiB RAM');
-  } else if (ramGiB < 5.75) {
-    cap = Math.min(cap, 32);
-    reasons.push('<5.75 GiB RAM');
-  }
-
-  if (ramGiB < 5.75 && modelSize >= 2.5 * GIB) {
-    cap = Math.min(cap, 8);
-    reasons.push('large model on constrained RAM');
-  } else if (ramGiB < 5.75 && modelSize >= 2.0 * GIB) {
-    cap = Math.min(cap, 12);
-    reasons.push('boundary model on constrained RAM');
-  } else if (ramGiB < 4.75 && modelSize >= 1.5 * GIB) {
-    cap = Math.min(cap, 16);
-    reasons.push('3B-class model on 4 GiB-class device');
-  }
-
-  if (ramGiB < 5.75 && modelParams >= 6_000_000_000) {
-    cap = Math.min(cap, 8);
-    reasons.push('6B+ params on constrained RAM');
-  }
-
-  return {
-    cap,
-    reason: reasons.length > 0 ? reasons.join(', ') : undefined,
-  };
-}
-
-function getMetalFamilyLayerCap(args: {
-  requestedGpuLayers: number;
-  model?: Model;
-  metalInfo?: MetalInfo | null;
-}): {cap: number; reason?: string} {
-  const highestAppleFamily = Number(args.metalInfo?.highestAppleFamily);
-  if (!Number.isFinite(highestAppleFamily) || highestAppleFamily <= 0) {
-    return {cap: args.requestedGpuLayers};
-  }
-
-  const modelSize = args.model?.size ?? 0;
-  const modelParams = args.model?.params ?? 0;
-  let cap = args.requestedGpuLayers;
-  const reasons: string[] = [];
-
-  if (highestAppleFamily <= 7) {
-    cap = Math.min(cap, 32);
-    reasons.push(`Apple GPU family ${highestAppleFamily}`);
-
-    if (modelSize >= 2.5 * GIB || modelParams >= 6_000_000_000) {
-      cap = Math.min(cap, 16);
-      reasons.push('large model on older Apple GPU');
-    } else if (modelSize >= 2.0 * GIB) {
-      cap = Math.min(cap, 24);
-      reasons.push('boundary model on older Apple GPU');
-    }
-  } else if (highestAppleFamily === 8) {
-    cap = Math.min(cap, 48);
-    reasons.push('Apple GPU family 8');
-
-    if (modelSize >= 2.5 * GIB || modelParams >= 6_000_000_000) {
-      cap = Math.min(cap, 32);
-      reasons.push('large model on A15-class GPU');
-    }
-  }
-
-  return {
-    cap,
-    reason: reasons.length > 0 ? reasons.join(', ') : undefined,
-  };
-}
-
-function capByMetalWorkingSet(args: {
-  cap: number;
-  model?: Model;
-  params: Partial<Omit<ContextParams, 'model'>>;
-  metalInfo?: MetalInfo | null;
-}): {cap: number; reason?: string} {
-  const metalBudget = args.metalInfo?.recommendedMaxWorkingSetSize;
-  const layerCount = getLayerCount(args.model);
-  if (
-    !args.model ||
-    !layerCount ||
-    !Number.isFinite(metalBudget) ||
-    !metalBudget ||
-    metalBudget <= 0 ||
-    args.cap <= 0
-  ) {
-    return {cap: args.cap};
-  }
-
-  const safeBudget = metalBudget * METAL_WORKING_SET_HEADROOM;
-  const useMmapValue = (args.params as any).use_mmap;
-  const contextSettings = {
-    ...args.params,
-    version: CURRENT_CONTEXT_INIT_PARAMS_VERSION,
-    n_ctx: positiveIntegerOrFallback((args.params as any).n_ctx, 2048),
-    n_batch: positiveIntegerOrFallback((args.params as any).n_batch, 512),
-    n_ubatch: positiveIntegerOrFallback((args.params as any).n_ubatch, 512),
-    n_threads: positiveIntegerOrFallback((args.params as any).n_threads, 4),
-    cache_type_k: (args.params as any).cache_type_k ?? 'f16',
-    cache_type_v: (args.params as any).cache_type_v ?? 'f16',
-    use_mmap:
-      useMmapValue === 'false' || useMmapValue === false ? 'false' : 'true',
-  } as ContextInitParams;
-  const totalEstimate = getModelMemoryRequirement(
-    args.model,
-    undefined,
-    contextSettings,
-  );
-  const nonWeightResident = Math.max(
-    totalEstimate - args.model.size,
-    384 * MIB,
-  );
-  const maxLayers = Math.min(args.cap, layerCount);
-
-  for (let layers = maxLayers; layers > 0; layers -= 1) {
-    const residentEstimate =
-      nonWeightResident + args.model.size * (layers / layerCount);
-    if (residentEstimate <= safeBudget) {
-      return layers === args.cap
-        ? {cap: args.cap}
-        : {
-            cap: layers,
-            reason: `Metal working-set headroom (${Math.round(safeBudget / MIB)} MiB budget)`,
-          };
-    }
-  }
-
-  return {
-    cap: 0,
-    reason: `Metal working-set headroom (${Math.round(safeBudget / MIB)} MiB budget)`,
-  };
 }
 
 export function applyIOSMetalSafetyPolicy(args: {
@@ -304,14 +321,25 @@ export function applyIOSMetalSafetyPolicy(args: {
     };
   }
 
-  const smallDevice = getSmallDeviceLayerCap({
+  let params = args.params;
+  const reasons: string[] = [];
+  let logLevel: 'info' | 'warn' = 'info';
+  let effectiveGpuLayers = requestedGpuLayers;
+
+  const autoLayers = resolveIOSMetalAutoGpuLayers({
     requestedGpuLayers,
+    params,
     model: args.model,
     totalMemoryBytes: args.totalMemoryBytes,
+    metalInfo: args.metalInfo,
   });
-  let cap = smallDevice.cap;
-  const reasons = smallDevice.reason ? [smallDevice.reason] : [];
-  let params = args.params;
+  effectiveGpuLayers = autoLayers.effectiveGpuLayers;
+  if (autoLayers.reason) {
+    reasons.push(autoLayers.reason);
+  }
+  if (autoLayers.logLevel === 'warn') {
+    logLevel = 'warn';
+  }
 
   const turbo2Guard = applyConstrainedIpadTurbo2Guard({
     params,
@@ -321,39 +349,10 @@ export function applyIOSMetalSafetyPolicy(args: {
   params = turbo2Guard.params;
   if (turbo2Guard.reason) {
     reasons.push(turbo2Guard.reason);
+    logLevel = 'warn';
   }
 
-  const metalFamily = getMetalFamilyLayerCap({
-    requestedGpuLayers: cap,
-    model: args.model,
-    metalInfo: args.metalInfo,
-  });
-  cap = metalFamily.cap;
-  if (metalFamily.reason) {
-    reasons.push(metalFamily.reason);
-  }
-
-  const priorFailureCount = args.priorFailureCount ?? 0;
-  if (priorFailureCount >= 2) {
-    cap = 0;
-    reasons.push('repeated interrupted Metal loads on this device');
-  } else if (priorFailureCount === 1) {
-    cap = Math.min(cap, 8);
-    reasons.push('previous interrupted Metal load on this device');
-  }
-
-  const workingSet = capByMetalWorkingSet({
-    cap,
-    model: args.model,
-    params,
-    metalInfo: args.metalInfo,
-  });
-  cap = workingSet.cap;
-  if (workingSet.reason) {
-    reasons.push(workingSet.reason);
-  }
-
-  if (cap >= requestedGpuLayers && !turbo2Guard.reason) {
+  if (effectiveGpuLayers === requestedGpuLayers && !turbo2Guard.reason) {
     return {
       params,
       requestedGpuLayers,
@@ -364,30 +363,19 @@ export function applyIOSMetalSafetyPolicy(args: {
 
   const stableParams: Partial<Omit<ContextParams, 'model'>> = {
     ...params,
-    n_gpu_layers: cap,
-    n_batch: Math.min(
-      positiveIntegerOrFallback(args.params.n_batch, 512),
-      SMALL_IOS_BATCH_CAP,
-    ),
-    n_ubatch: Math.min(
-      positiveIntegerOrFallback(args.params.n_ubatch, 512),
-      SMALL_IOS_BATCH_CAP,
-    ),
-    use_mmap: true,
-    use_mlock: false,
-    no_extra_bufts: true,
-    warmup: false,
+    n_gpu_layers: effectiveGpuLayers,
   };
 
-  if (cap <= 0) {
+  if (effectiveGpuLayers <= 0) {
     stableParams.devices = ['CPU'];
   }
 
   return {
     params: stableParams,
     requestedGpuLayers,
-    effectiveGpuLayers: cap,
+    effectiveGpuLayers,
     applied: true,
     reason: reasons.join('; ') || 'iOS Metal compatibility cap',
+    logLevel,
   };
 }

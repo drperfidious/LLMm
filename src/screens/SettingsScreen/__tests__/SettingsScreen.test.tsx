@@ -33,6 +33,7 @@ describe('SettingsScreen', () => {
     modelStore.activeModelId = undefined;
     modelStore.lastUsedModelId = undefined;
     modelStore.allowUnsafeContextLimits = false;
+    modelStore.dynamicMetalBatchTuning = false;
     modelStore.requestedContextSize = undefined;
     // Ensure clean timer state for each test
     jest.clearAllTimers();
@@ -238,7 +239,9 @@ describe('SettingsScreen', () => {
       fireEvent(gpuBtn, 'press');
     });
 
-    expect(modelStore.setDevices).toHaveBeenCalledWith(['Apple A16 GPU']);
+    expect(modelStore.setDevices).toHaveBeenCalledWith(['Metal']);
+    expect(modelStore.setNGPULayers).toHaveBeenCalledWith(99);
+    expect(modelStore.setNoGpuDevices).toHaveBeenCalledWith(false);
 
     const gpuSlider = getByTestId('gpu-layers-slider');
 

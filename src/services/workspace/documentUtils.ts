@@ -87,6 +87,14 @@ export function isTextLikeWorkspacePath(path: string): boolean {
   return TEXT_EXTENSIONS.has(extensionForPath(path));
 }
 
+export function isPdfWorkspacePath(path: string): boolean {
+  return extensionForPath(path) === '.pdf';
+}
+
+export function isReadableWorkspacePath(path: string): boolean {
+  return isTextLikeWorkspacePath(path) || isPdfWorkspacePath(path);
+}
+
 export function languageForWorkspacePath(path: string): string {
   const ext = extensionForPath(path);
   return LANGUAGE_BY_EXTENSION[ext] ?? 'text';
@@ -152,8 +160,11 @@ export function formatDocumentForChat(input: {
 }): string {
   const language = input.language ?? languageForWorkspacePath(input.path);
   const fence = language === 'text' ? '' : language;
+  const label = isPdfWorkspacePath(input.path)
+    ? 'Workspace PDF document'
+    : 'Workspace document';
   return [
-    `Workspace document: ${input.path}`,
+    `${label}: ${input.path}`,
     '',
     `\`\`\`${fence}`,
     input.content,

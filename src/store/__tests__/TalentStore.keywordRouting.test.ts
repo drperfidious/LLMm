@@ -22,6 +22,15 @@ describe('TalentStore keyword routing', () => {
     expect(matches).not.toContain('workspace_delete');
   });
 
+  it('routes empty folder cleanup to the dedicated prune tool', () => {
+    const matches = talentStore.getKeywordMatchedTalentNames(
+      'Remove all empty subdirectories, ls them first to find them',
+    );
+
+    expect(matches).toContain('workspace_list');
+    expect(matches).toContain('workspace_prune_empty_dirs');
+  });
+
   it('matches upcoming calendar reads without exposing calendar writes', () => {
     const matches = talentStore.getKeywordMatchedTalentNames(
       "What's coming next on my calendar?",
@@ -29,6 +38,50 @@ describe('TalentStore keyword routing', () => {
 
     expect(matches).toContain('calendar_find_events');
     expect(matches).not.toContain('calendar_create_event');
+  });
+
+  it('routes class schedule requests to calendar instead of web search', () => {
+    const matches = talentStore.getKeywordMatchedTalentNames(
+      'Can you check my class schedule in a month?',
+    );
+
+    expect(matches).toContain('calendar_find_events');
+    expect(matches).not.toContain('web_search');
+  });
+
+  it('routes plural email requests to mailbox search', () => {
+    const matches = talentStore.getKeywordMatchedTalentNames(
+      'Can you read my emails from this morning?',
+    );
+
+    expect(matches).toContain('mail_search');
+  });
+
+  it('routes reminder creation and deletion to the right reminder tools', () => {
+    expect(
+      talentStore.getKeywordMatchedTalentNames(
+        'Remind me to submit the assignment tomorrow at 8',
+      ),
+    ).toContain('reminder_create');
+    expect(
+      talentStore.getKeywordMatchedTalentNames(
+        'Remove the assignment reminder',
+      ),
+    ).toContain('reminder_delete');
+  });
+
+  it('routes clock creation without also exposing clock listing', () => {
+    const timerMatches = talentStore.getKeywordMatchedTalentNames(
+      'Set a timer for five minutes',
+    );
+    const alarmMatches = talentStore.getKeywordMatchedTalentNames(
+      'Set an alarm for tomorrow at 7',
+    );
+
+    expect(timerMatches).toContain('clock_create_timer');
+    expect(timerMatches).not.toContain('clock_list');
+    expect(alarmMatches).toContain('clock_create_alarm');
+    expect(alarmMatches).not.toContain('clock_list');
   });
 
   it('does not match alphanumeric keywords inside unrelated words', () => {

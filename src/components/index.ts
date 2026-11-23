@@ -60,6 +60,7 @@ export * from './TextMessage';
 export * from './TTSSetupSheet';
 export * from './ToolErrorBlock';
 export * from './ToolMetricsFooter';
+export * from './ToolTraceDisclosure';
 export * from './ToolUsedChip';
 export * from './UsageStats';
 export * from './VideoPalEmptyPlaceholder';

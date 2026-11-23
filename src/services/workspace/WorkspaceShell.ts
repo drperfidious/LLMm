@@ -36,6 +36,7 @@ const BUILTIN_COMMANDS = [
   'wc',
   'touch',
   'mkdir',
+  'rmdir',
   'rm',
   'cp',
   'mv',
@@ -84,6 +85,7 @@ const HELP = [
   '  wc <file>',
   '  touch <file>',
   '  mkdir <path>',
+  '  rmdir <empty-directory>',
   '  rm <path>',
   '  cp [-f] <source> <target>',
   '  mv [-f] <source> <target>',
@@ -472,6 +474,23 @@ export class WorkspaceShell {
             cwd: currentCwd,
             command,
             output: `Created ${path}`,
+            mutated: true,
+          };
+        }
+        case 'rmdir': {
+          if (!args[0]?.value) {
+            throw new Error('rmdir requires a path');
+          }
+          const entries = await this.fs.list(args[0].value, cwdRel);
+          if (entries.length > 0) {
+            throw new Error('rmdir only removes empty directories');
+          }
+          const result = await this.fs.deletePath(args[0].value, cwdRel);
+          return {
+            ok: true,
+            cwd: currentCwd,
+            command,
+            output: `Deleted ${result.path}`,
             mutated: true,
           };
         }

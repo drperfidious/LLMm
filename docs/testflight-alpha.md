@@ -30,7 +30,7 @@ Useful overrides:
 ```sh
 TEAM_ID=L55NPDLDY2 \
 BUNDLE_ID=com.randyduquette.llmm \
-MARKETING_VERSION=0.1.0 \
+MARKETING_VERSION=0.4.0 \
 BUILD_NUMBER=2026062001 \
 scripts/archive-ios-testflight-xcode27.sh
 ```
@@ -92,11 +92,15 @@ and enable a private public link or invite specific emails.
 Suggested "What to Test":
 
 ```text
-LLMm is an on-device LLM chat and agent testing app. Please test:
+LLMm 0.4.0 is an on-device LLM chat and agent testing app. Please test:
 - installing and launching cleanly
 - downloading a small model and loading it
 - Chat vs Agent mode behavior
+- per-model profile settings, especially context, batch, backend, and K/V cache
+- readable Markdown and math formatting in model replies
 - Talents setup, especially web search API key entry
+- reminder creation/removal in Agent mode
+- iOS 26+ LLMm-owned timers/alarms if your device prompts for clock access
 - benchmark launch, progress, crashes, and storage cleanup
 - app switching and returning without losing state
 

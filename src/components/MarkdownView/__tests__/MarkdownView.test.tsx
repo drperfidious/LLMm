@@ -144,7 +144,7 @@ describe('MarkdownView Component', () => {
     );
 
     expect(getAllByTestId('markdown-inline-math')).toHaveLength(2);
-    expect(getByText('E = mc^2')).toBeTruthy();
+    expect(getByText('E = mc²')).toBeTruthy();
     expect(getByText('a_i = b_i + c_i')).toBeTruthy();
     expect(queryByText('$E = mc^2$')).toBeNull();
   });
@@ -159,9 +159,27 @@ describe('MarkdownView Component', () => {
     );
 
     expect(getByTestId('markdown-block-math')).toBeTruthy();
-    expect(getByText(equation)).toBeTruthy();
+    expect(getByText(/1⁄n/)).toBeTruthy();
+    expect(getByText(/Σ/)).toBeTruthy();
     expect(getByText('Before')).toBeTruthy();
     expect(getByText('After')).toBeTruthy();
+  });
+
+  it('renders bare LaTeX equation lines as readable display math', () => {
+    const equation =
+      '\\pi = 4 \\left(1 - \\frac{1}{3} + \\frac{1}{5} - \\frac{1}{7} + \\cdots\\right)';
+    const {getByText, getByTestId, queryByText} = render(
+      <MarkdownView
+        markdownText={`Leibniz Formula\n\n${equation}\n\nNot efficient for high precision.`}
+        maxMessageWidth={300}
+      />,
+    );
+
+    expect(getByTestId('markdown-block-math')).toBeTruthy();
+    expect(getByText('π = 4(1 - 1⁄3 + 1⁄5 - 1⁄7 + ⋯)')).toBeTruthy();
+    expect(queryByText(equation)).toBeNull();
+    expect(getByText('Leibniz Formula')).toBeTruthy();
+    expect(getByText('Not efficient for high precision.')).toBeTruthy();
   });
 
   it('renders parenthesized LaTeX inline math delimiters', () => {
@@ -173,7 +191,7 @@ describe('MarkdownView Component', () => {
     );
 
     expect(getByTestId('markdown-inline-math')).toBeTruthy();
-    expect(getByText('a^2 + b^2 = c^2')).toBeTruthy();
+    expect(getByText('a² + b² = c²')).toBeTruthy();
     expect(queryByText(/\\\(a\^2/)).toBeNull();
   });
 
@@ -187,7 +205,7 @@ describe('MarkdownView Component', () => {
     );
 
     expect(getByTestId('markdown-block-math')).toBeTruthy();
-    expect(getByText(equation)).toBeTruthy();
+    expect(getByText('x = (-b ± √(b² - 4ac))⁄2a')).toBeTruthy();
     expect(getByText('Before')).toBeTruthy();
     expect(getByText('After')).toBeTruthy();
   });
@@ -202,7 +220,7 @@ describe('MarkdownView Component', () => {
     );
 
     expect(getByTestId('markdown-block-math')).toBeTruthy();
-    expect(getByText(equation)).toBeTruthy();
+    expect(getByText('a = b + c')).toBeTruthy();
   });
 
   it('does not convert dollar signs inside code spans or code blocks', () => {

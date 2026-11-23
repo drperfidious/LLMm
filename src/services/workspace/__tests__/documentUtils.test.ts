@@ -1,6 +1,8 @@
 import {
   formatBytes,
   formatDocumentForChat,
+  isPdfWorkspacePath,
+  isReadableWorkspacePath,
   isTextLikeWorkspacePath,
   languageForWorkspacePath,
   pathWithInferredTextExtension,
@@ -12,6 +14,13 @@ describe('workspace document utils', () => {
     expect(isTextLikeWorkspacePath('/documents/note.md')).toBe(true);
     expect(isTextLikeWorkspacePath('/documents/data.json')).toBe(true);
     expect(isTextLikeWorkspacePath('/documents/report.pdf')).toBe(false);
+  });
+
+  it('detects readable workspace document paths', () => {
+    expect(isPdfWorkspacePath('/documents/report.pdf')).toBe(true);
+    expect(isReadableWorkspacePath('/documents/report.pdf')).toBe(true);
+    expect(isReadableWorkspacePath('/documents/note.md')).toBe(true);
+    expect(isReadableWorkspacePath('/documents/archive.zip')).toBe(false);
   });
 
   it('maps common extensions to code fence languages', () => {
@@ -52,5 +61,14 @@ describe('workspace document utils', () => {
         content: '# Hello',
       }),
     ).toContain('```markdown\n# Hello\n```');
+  });
+
+  it('labels PDFs as PDF document context', () => {
+    expect(
+      formatDocumentForChat({
+        path: '/documents/report.pdf',
+        content: 'PDF text',
+      }),
+    ).toContain('Workspace PDF document: /documents/report.pdf');
   });
 });

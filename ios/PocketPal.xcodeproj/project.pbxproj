@@ -9,6 +9,12 @@
 /* Begin PBXBuildFile section */
 		07332F05959E4DB0A6228E3F /* JetBrainsMono-Regular.ttf in Resources */ = {isa = PBXBuildFile; fileRef = FF9D2CC3DF0F4073AB223CC1 /* JetBrainsMono-Regular.ttf */; };
 		0D85337A512F432695A638E3 /* StorefrontModule.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5EDB347C521A41619835CAD9 /* StorefrontModule.swift */; };
+		0F4D0A010000000000000001 /* DonationModule.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0F4D0A010000000000000003 /* DonationModule.swift */; };
+		0F4D0A010000000000000002 /* DonationModule.m in Sources */ = {isa = PBXBuildFile; fileRef = 0F4D0A010000000000000004 /* DonationModule.m */; };
+		0F4D0A020000000000000001 /* NativeMailModule.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0F4D0A020000000000000003 /* NativeMailModule.swift */; };
+		0F4D0A020000000000000002 /* NativeMailModule.m in Sources */ = {isa = PBXBuildFile; fileRef = 0F4D0A020000000000000004 /* NativeMailModule.m */; };
+		0F4D0A030000000000000001 /* AppleClockModule.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0F4D0A030000000000000003 /* AppleClockModule.swift */; };
+		0F4D0A030000000000000002 /* AppleClockModule.m in Sources */ = {isa = PBXBuildFile; fileRef = 0F4D0A030000000000000004 /* AppleClockModule.m */; };
 		12AF82A15E3F4E718F83B5CB /* Fraunces-Italic.ttf in Resources */ = {isa = PBXBuildFile; fileRef = 5CA7744EABD04174A8E4568B /* Fraunces-Italic.ttf */; };
 		13B07FBF1A68108700A75B9A /* Images.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = 13B07FB51A68108700A75B9A /* Images.xcassets */; };
 		1A0D5411C2B6438BA6761FA8 /* Fraunces-Medium.ttf in Resources */ = {isa = PBXBuildFile; fileRef = E99C8033A91D40AB8D2BD167 /* Fraunces-Medium.ttf */; };
@@ -44,6 +50,8 @@
 		B70FB28C50CE468DAF8D023A /* JetBrainsMono-Regular.ttf in Resources */ = {isa = PBXBuildFile; fileRef = FF9D2CC3DF0F4073AB223CC1 /* JetBrainsMono-Regular.ttf */; };
 		C4CA10010000000000000001 /* AppleCalendarModule.swift in Sources */ = {isa = PBXBuildFile; fileRef = C4CA10010000000000000003 /* AppleCalendarModule.swift */; };
 		C4CA10010000000000000002 /* AppleCalendarModule.m in Sources */ = {isa = PBXBuildFile; fileRef = C4CA10010000000000000004 /* AppleCalendarModule.m */; };
+		C4D0F1000000000000000001 /* PdfTextExtractor.swift in Sources */ = {isa = PBXBuildFile; fileRef = C4D0F1000000000000000003 /* PdfTextExtractor.swift */; };
+		C4D0F1000000000000000002 /* PdfTextExtractor.m in Sources */ = {isa = PBXBuildFile; fileRef = C4D0F1000000000000000004 /* PdfTextExtractor.m */; };
 		C0270FB5CD74463CA3FF5284 /* Inter-ExtraBold.ttf in Resources */ = {isa = PBXBuildFile; fileRef = B033E4AC2D8E41719BF5142F /* Inter-ExtraBold.ttf */; };
 		C12BD91DEBF24C6F8A87DF6E /* JetBrainsMono-Medium.ttf in Resources */ = {isa = PBXBuildFile; fileRef = 9FFFE5CF13C04970AB5BF8BF /* JetBrainsMono-Medium.ttf */; };
 		C59DFCFFEF9345419C9E30E2 /* Fraunces-Medium.ttf in Resources */ = {isa = PBXBuildFile; fileRef = E99C8033A91D40AB8D2BD167 /* Fraunces-Medium.ttf */; };
@@ -68,6 +76,13 @@
 		13B07FB51A68108700A75B9A /* Images.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; name = Images.xcassets; path = PocketPal/Images.xcassets; sourceTree = "<group>"; };
 		13B07FB61A68108700A75B9A /* Info.plist */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = text.plist.xml; name = Info.plist; path = PocketPal/Info.plist; sourceTree = "<group>"; };
 		13B07FB81A68108700A75B9A /* PrivacyInfo.xcprivacy */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = text.plist.xml; name = PrivacyInfo.xcprivacy; path = PocketPal/PrivacyInfo.xcprivacy; sourceTree = "<group>"; };
+		0F4D0A010000000000000003 /* DonationModule.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = DonationModule.swift; path = PocketPal/DonationModule.swift; sourceTree = "<group>"; };
+		0F4D0A010000000000000004 /* DonationModule.m */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.objc; name = DonationModule.m; path = PocketPal/DonationModule.m; sourceTree = "<group>"; };
+		0F4D0A010000000000000005 /* LLMmTips.storekit */ = {isa = PBXFileReference; lastKnownFileType = text; name = LLMmTips.storekit; path = PocketPal/LLMmTips.storekit; sourceTree = "<group>"; };
+		0F4D0A020000000000000003 /* NativeMailModule.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = NativeMailModule.swift; path = PocketPal/NativeMailModule.swift; sourceTree = "<group>"; };
+		0F4D0A020000000000000004 /* NativeMailModule.m */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.objc; name = NativeMailModule.m; path = PocketPal/NativeMailModule.m; sourceTree = "<group>"; };
+		0F4D0A030000000000000003 /* AppleClockModule.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = AppleClockModule.swift; path = PocketPal/AppleClockModule.swift; sourceTree = "<group>"; };
+		0F4D0A030000000000000004 /* AppleClockModule.m */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.objc; name = AppleClockModule.m; path = PocketPal/AppleClockModule.m; sourceTree = "<group>"; };
 		1C8910232AC14C2091248E32 /* Inter-Bold.ttf */ = {isa = PBXFileReference; explicitFileType = undefined; fileEncoding = 9; includeInIndex = 0; lastKnownFileType = unknown; name = "Inter-Bold.ttf"; path = "../src/assets/fonts/Inter-Bold.ttf"; sourceTree = "<group>"; };
 		1DD32FCAE4CC46F1E23FD870 /* Pods-PocketPal-PocketPalTests.debug.xcconfig */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = text.xcconfig; name = "Pods-PocketPal-PocketPalTests.debug.xcconfig"; path = "Target Support Files/Pods-PocketPal-PocketPalTests/Pods-PocketPal-PocketPalTests.debug.xcconfig"; sourceTree = "<group>"; };
 		2976BD78FB093478AA202FEA /* Pods_PocketPal_PocketPalTests.framework */ = {isa = PBXFileReference; explicitFileType = wrapper.framework; includeInIndex = 0; path = Pods_PocketPal_PocketPalTests.framework; sourceTree = BUILT_PRODUCTS_DIR; };
@@ -108,6 +123,8 @@
 		BB20B47BBDAD48C3B5711DA7 /* StorefrontModule.m */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.objc; name = StorefrontModule.m; path = PocketPal/StorefrontModule.m; sourceTree = "<group>"; };
 		C4CA10010000000000000003 /* AppleCalendarModule.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = AppleCalendarModule.swift; path = PocketPal/AppleCalendarModule.swift; sourceTree = "<group>"; };
 		C4CA10010000000000000004 /* AppleCalendarModule.m */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.objc; name = AppleCalendarModule.m; path = PocketPal/AppleCalendarModule.m; sourceTree = "<group>"; };
+		C4D0F1000000000000000003 /* PdfTextExtractor.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = PdfTextExtractor.swift; path = PocketPal/PdfTextExtractor.swift; sourceTree = "<group>"; };
+		C4D0F1000000000000000004 /* PdfTextExtractor.m */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.objc; name = PdfTextExtractor.m; path = PocketPal/PdfTextExtractor.m; sourceTree = "<group>"; };
 		C5BB422A56184C889DB9EAFD /* Inter-SemiBold.ttf */ = {isa = PBXFileReference; explicitFileType = undefined; fileEncoding = 9; includeInIndex = 0; lastKnownFileType = unknown; name = "Inter-SemiBold.ttf"; path = "../src/assets/fonts/Inter-SemiBold.ttf"; sourceTree = "<group>"; };
 		E99C8033A91D40AB8D2BD167 /* Fraunces-Medium.ttf */ = {isa = PBXFileReference; explicitFileType = undefined; fileEncoding = undefined; includeInIndex = 0; lastKnownFileType = unknown; name = "Fraunces-Medium.ttf"; path = "../src/assets/fonts/Fraunces-Medium.ttf"; sourceTree = "<group>"; };
 		ED297162215061F000B7C4FE /* JavaScriptCore.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = JavaScriptCore.framework; path = System/Library/Frameworks/JavaScriptCore.framework; sourceTree = SDKROOT; };
@@ -167,8 +184,17 @@
 				A8B4FFDB2EA5736100CD3B4C /* DeepLinkModule.swift */,
 				BB20B47BBDAD48C3B5711DA7 /* StorefrontModule.m */,
 				5EDB347C521A41619835CAD9 /* StorefrontModule.swift */,
+				0F4D0A010000000000000004 /* DonationModule.m */,
+				0F4D0A010000000000000003 /* DonationModule.swift */,
+				0F4D0A010000000000000005 /* LLMmTips.storekit */,
+				0F4D0A020000000000000004 /* NativeMailModule.m */,
+				0F4D0A020000000000000003 /* NativeMailModule.swift */,
+				0F4D0A030000000000000004 /* AppleClockModule.m */,
+				0F4D0A030000000000000003 /* AppleClockModule.swift */,
 				C4CA10010000000000000004 /* AppleCalendarModule.m */,
 				C4CA10010000000000000003 /* AppleCalendarModule.swift */,
+				C4D0F1000000000000000004 /* PdfTextExtractor.m */,
+				C4D0F1000000000000000003 /* PdfTextExtractor.swift */,
 				AB1001010000000000000004 /* AuthSessionModule.m */,
 				AB1001010000000000000003 /* AuthSessionModule.swift */,
 				A8B4FFCC2EA5731700CD3B4C /* AskPalIntent.swift */,
@@ -526,8 +552,16 @@
 				A8B4FFDD2EA5736100CD3B4C /* DeepLinkModule.m in Sources */,
 				0D85337A512F432695A638E3 /* StorefrontModule.swift in Sources */,
 				C75985DD3D2E4F2083261F4B /* StorefrontModule.m in Sources */,
+				0F4D0A010000000000000001 /* DonationModule.swift in Sources */,
+				0F4D0A010000000000000002 /* DonationModule.m in Sources */,
+				0F4D0A020000000000000001 /* NativeMailModule.swift in Sources */,
+				0F4D0A020000000000000002 /* NativeMailModule.m in Sources */,
+				0F4D0A030000000000000001 /* AppleClockModule.swift in Sources */,
+				0F4D0A030000000000000002 /* AppleClockModule.m in Sources */,
 				C4CA10010000000000000001 /* AppleCalendarModule.swift in Sources */,
 				C4CA10010000000000000002 /* AppleCalendarModule.m in Sources */,
+				C4D0F1000000000000000001 /* PdfTextExtractor.swift in Sources */,
+				C4D0F1000000000000000002 /* PdfTextExtractor.m in Sources */,
 				AB1001010000000000000001 /* AuthSessionModule.swift in Sources */,
 				AB1001010000000000000002 /* AuthSessionModule.m in Sources */,
 				A86CF0D42EA57BE100BFFCEE /* LlamaContextWrapper.mm in Sources */,
@@ -566,7 +600,7 @@
 				CLANG_ENABLE_MODULES = YES;
 				CODE_SIGN_ENTITLEMENTS = PocketPal/PocketPal.entitlements;
 				CODE_SIGN_STYLE = Manual;
-				CURRENT_PROJECT_VERSION = 144;
+				CURRENT_PROJECT_VERSION = 148;
 				"DEVELOPMENT_TEAM[sdk=iphoneos*]" = MYXGXY23Y6;
 				ENABLE_BITCODE = NO;
 				INFOPLIST_FILE = PocketPal/Info.plist;
@@ -575,7 +609,7 @@
 					"$(inherited)",
 					"@executable_path/Frameworks",
 				);
-				MARKETING_VERSION = 0.3.1;
+				MARKETING_VERSION = 0.4.0;
 				OTHER_LDFLAGS = (
 					"$(inherited)",
 					"-ObjC",
@@ -606,7 +640,7 @@
 				CODE_SIGN_ENTITLEMENTS = PocketPal/PocketPal.entitlements;
 				"CODE_SIGN_IDENTITY[sdk=iphoneos*]" = "iPhone Distribution";
 				CODE_SIGN_STYLE = Manual;
-				CURRENT_PROJECT_VERSION = 144;
+				CURRENT_PROJECT_VERSION = 148;
 				"DEVELOPMENT_TEAM[sdk=iphoneos*]" = MYXGXY23Y6;
 				INFOPLIST_FILE = PocketPal/Info.plist;
 				IPHONEOS_DEPLOYMENT_TARGET = 15.1;
@@ -614,7 +648,7 @@
 					"$(inherited)",
 					"@executable_path/Frameworks",
 				);
-				MARKETING_VERSION = 0.3.1;
+				MARKETING_VERSION = 0.4.0;
 				OTHER_LDFLAGS = (
 					"$(inherited)",
 					"-ObjC",
@@ -842,14 +876,14 @@
 				CLANG_WARN_DOCUMENTATION_COMMENTS = YES;
 				CLANG_WARN_UNGUARDED_AVAILABILITY = YES_AGGRESSIVE;
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 144;
+				CURRENT_PROJECT_VERSION = 148;
 				DEBUG_INFORMATION_FORMAT = dwarf;
 				ENABLE_USER_SCRIPT_SANDBOXING = YES;
 				GCC_C_LANGUAGE_STANDARD = gnu17;
 				GENERATE_INFOPLIST_FILE = YES;
 				IPHONEOS_DEPLOYMENT_TARGET = 18.6;
 				LOCALIZATION_PREFERS_STRING_CATALOGS = YES;
-				MARKETING_VERSION = 0.3.1;
+				MARKETING_VERSION = 0.4.0;
 				MTL_ENABLE_DEBUG_INFO = INCLUDE_SOURCE;
 				MTL_FAST_MATH = YES;
 				PRODUCT_BUNDLE_IDENTIFIER = ai.PocketPalTests;
@@ -875,14 +909,14 @@
 				CLANG_WARN_UNGUARDED_AVAILABILITY = YES_AGGRESSIVE;
 				CODE_SIGN_STYLE = Automatic;
 				COPY_PHASE_STRIP = NO;
-				CURRENT_PROJECT_VERSION = 144;
+				CURRENT_PROJECT_VERSION = 148;
 				DEBUG_INFORMATION_FORMAT = "dwarf-with-dsym";
 				ENABLE_USER_SCRIPT_SANDBOXING = YES;
 				GCC_C_LANGUAGE_STANDARD = gnu17;
 				GENERATE_INFOPLIST_FILE = YES;
 				IPHONEOS_DEPLOYMENT_TARGET = 18.6;
 				LOCALIZATION_PREFERS_STRING_CATALOGS = YES;
-				MARKETING_VERSION = 0.3.1;
+				MARKETING_VERSION = 0.4.0;
 				MTL_FAST_MATH = YES;
 				PRODUCT_BUNDLE_IDENTIFIER = ai.PocketPalTests;
 				PRODUCT_NAME = "$(TARGET_NAME)";
@@ -997,7 +1031,7 @@
 				CODE_SIGN_ENTITLEMENTS = PocketPal/PocketPal.entitlements;
 				"CODE_SIGN_IDENTITY[sdk=iphoneos*]" = "iPhone Distribution";
 				CODE_SIGN_STYLE = Manual;
-				CURRENT_PROJECT_VERSION = 144;
+				CURRENT_PROJECT_VERSION = 148;
 				"DEVELOPMENT_TEAM[sdk=iphoneos*]" = MYXGXY23Y6;
 				INFOPLIST_FILE = PocketPal/Info.plist;
 				IPHONEOS_DEPLOYMENT_TARGET = 15.1;
@@ -1005,7 +1039,7 @@
 					"$(inherited)",
 					"@executable_path/Frameworks",
 				);
-				MARKETING_VERSION = 0.3.1;
+				MARKETING_VERSION = 0.4.0;
 				OTHER_LDFLAGS = (
 					"$(inherited)",
 					"-ObjC",
@@ -1039,14 +1073,14 @@
 				CLANG_WARN_UNGUARDED_AVAILABILITY = YES_AGGRESSIVE;
 				CODE_SIGN_STYLE = Automatic;
 				COPY_PHASE_STRIP = NO;
-				CURRENT_PROJECT_VERSION = 144;
+				CURRENT_PROJECT_VERSION = 148;
 				DEBUG_INFORMATION_FORMAT = "dwarf-with-dsym";
 				ENABLE_USER_SCRIPT_SANDBOXING = YES;
 				GCC_C_LANGUAGE_STANDARD = gnu17;
 				GENERATE_INFOPLIST_FILE = YES;
 				IPHONEOS_DEPLOYMENT_TARGET = 18.6;
 				LOCALIZATION_PREFERS_STRING_CATALOGS = YES;
-				MARKETING_VERSION = 0.3.1;
+				MARKETING_VERSION = 0.4.0;
 				MTL_FAST_MATH = YES;
 				PRODUCT_BUNDLE_IDENTIFIER = ai.PocketPalTests;
 				PRODUCT_NAME = "$(TARGET_NAME)";

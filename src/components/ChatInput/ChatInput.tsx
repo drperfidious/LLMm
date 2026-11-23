@@ -55,7 +55,7 @@ import {
   dirname,
   formatBytes,
   formatDocumentForChat,
-  isTextLikeWorkspacePath,
+  isReadableWorkspacePath,
   languageForWorkspacePath,
   sanitizeWorkspaceFileName,
   workspaceFileSystem,
@@ -367,6 +367,31 @@ export const ChatInput = observer(
               workspacePaths: imported.map(entry => entry.path),
             },
           );
+
+          for (const entry of imported.filter(item =>
+            isReadableWorkspacePath(item.path),
+          )) {
+            try {
+              const result = await workspaceFileSystem.readFile(
+                entry.path,
+                '',
+                256 * 1024,
+              );
+              await addWorkspaceNote(
+                formatDocumentForChat({
+                  path: result.path,
+                  content: result.content,
+                  language: languageForWorkspacePath(result.path),
+                }),
+                {
+                  source: 'workspace_import_attachment',
+                  workspacePath: result.path,
+                },
+              );
+            } catch {
+              // Keep the import itself successful even if extraction fails.
+            }
+          }
           setWorkspaceStatus(`Imported ${imported.length} file(s).`);
         }
         await refreshWorkspaceMenu();
@@ -382,8 +407,10 @@ export const ChatInput = observer(
     };
 
     const handleCloneWorkspaceFile = async (entry: WorkspaceEntry) => {
-      if (!isTextLikeWorkspacePath(entry.path)) {
-        setWorkspaceStatus('Only text-like files can be cloned into chat.');
+      if (!isReadableWorkspacePath(entry.path)) {
+        setWorkspaceStatus(
+          'Only text-like files and PDFs can be cloned into chat.',
+        );
         return;
       }
       try {
@@ -557,7 +584,7 @@ export const ChatInput = observer(
       .slice(0, 8);
     const recentFiles = workspaceFiles.slice(0, 12);
     const cloneableFiles = workspaceFiles
-      .filter(entry => isTextLikeWorkspacePath(entry.path))
+      .filter(entry => isReadableWorkspacePath(entry.path))
       .slice(0, 12);
     const parentRel = dirname(workspaceCwd);
     const parentPath = parentRel ? `/${parentRel}` : '/';

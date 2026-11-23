@@ -15,6 +15,11 @@ import {SafeAreaView, useSafeAreaInsets} from 'react-native-safe-area-context';
 import {BuildInfo} from 'llama.rn';
 
 import {submitFeedback} from '../../api/feedback';
+import {
+  DonationProduct,
+  getDonationProducts,
+  purchaseDonation,
+} from '../../services/donations';
 
 import {
   CopyIcon,
@@ -47,10 +52,14 @@ export const AboutScreen: React.FC = () => {
   const styles = createStyles(theme, insets);
   const l10n = useContext(L10nContext);
   const [showFeedback, setShowFeedback] = useState(false);
+  const [donationProduct, setDonationProduct] =
+    useState<DonationProduct | null>(null);
+  const [isLoadingDonation, setIsLoadingDonation] = useState(false);
+  const [isPurchasingDonation, setIsPurchasingDonation] = useState(false);
 
   const [appInfo, setAppInfo] = React.useState({
-    version: '',
-    build: '',
+    version: '0.4.0',
+    build: '147',
   });
 
   const [useCase, setUseCase] = useState('');
@@ -66,6 +75,35 @@ export const AboutScreen: React.FC = () => {
       version,
       build: buildNumber,
     });
+  }, []);
+
+  React.useEffect(() => {
+    let cancelled = false;
+    const loadDonationProduct = async () => {
+      if (Platform.OS !== 'ios') {
+        return;
+      }
+      setIsLoadingDonation(true);
+      try {
+        const products = await getDonationProducts();
+        if (!cancelled) {
+          setDonationProduct(products[0] ?? null);
+        }
+      } catch {
+        if (!cancelled) {
+          setDonationProduct(null);
+        }
+      } finally {
+        if (!cancelled) {
+          setIsLoadingDonation(false);
+        }
+      }
+    };
+
+    loadDonationProduct();
+    return () => {
+      cancelled = true;
+    };
   }, []);
 
   const copyVersionToClipboard = () => {
@@ -143,6 +181,38 @@ export const AboutScreen: React.FC = () => {
     }
   };
 
+  const handleDonationPress = async () => {
+    if (!donationProduct || isPurchasingDonation) {
+      return;
+    }
+
+    setIsPurchasingDonation(true);
+    try {
+      const result = await purchaseDonation(donationProduct.id);
+      if (result.status === 'success') {
+        Alert.alert(
+          l10n.about.tipThankYouTitle,
+          l10n.about.tipThankYouDescription,
+        );
+      } else if (result.status === 'pending') {
+        Alert.alert(
+          l10n.about.tipPendingTitle,
+          l10n.about.tipPendingDescription,
+        );
+      }
+    } catch {
+      Alert.alert(l10n.about.tipErrorTitle, l10n.about.tipErrorDescription);
+    } finally {
+      setIsPurchasingDonation(false);
+    }
+  };
+
+  const donationButtonLabel = donationProduct
+    ? l10n.about.tipButton.replace('{{price}}', donationProduct.displayPrice)
+    : isLoadingDonation
+      ? l10n.about.tipLoading
+      : l10n.about.tipUnavailable;
+
   return (
     <SafeAreaView style={styles.safeArea} edges={['bottom']}>
       <ScrollView contentContainerStyle={styles.container}>
@@ -190,9 +260,15 @@ export const AboutScreen: React.FC = () => {
               icon={GithubButtonIcon}>
               {l10n.about.githubButton}
             </Button>
+          </View>
+
+          <View style={[styles.section, styles.compactSection]}>
+            <Text style={styles.sectionTitle}>{l10n.about.supportTitle}</Text>
+            <Text variant="bodyMedium" style={styles.mutedDescription}>
+              {l10n.about.supportDescription}
+            </Text>
             {Platform.OS !== 'ios' && (
               <>
-                <Text style={styles.orText}>{l10n.about.orText}</Text>
                 <TouchableOpacity
                   style={styles.supportButton}
                   onPress={() =>
@@ -205,7 +281,27 @@ export const AboutScreen: React.FC = () => {
                 </TouchableOpacity>
               </>
             )}
-            <Text style={styles.orText}>{l10n.about.orBy}</Text>
+            {Platform.OS === 'ios' && (
+              <>
+                <Button
+                  mode="contained"
+                  onPress={handleDonationPress}
+                  loading={isLoadingDonation || isPurchasingDonation}
+                  disabled={!donationProduct || isPurchasingDonation}
+                  style={styles.actionButton}>
+                  {donationButtonLabel}
+                </Button>
+                {!donationProduct && !isLoadingDonation && (
+                  <Text style={styles.supportHint}>
+                    {l10n.about.tipUnavailableDescription}
+                  </Text>
+                )}
+              </>
+            )}
+          </View>
+
+          <View style={[styles.section, styles.compactSection]}>
+            <Text style={styles.sectionTitle}>{l10n.about.feedbackTitle}</Text>
             <Button
               mode="outlined"
               style={styles.actionButton}
