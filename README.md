@@ -1,129 +1,152 @@
 # LLMm
 
-**Local-first iOS LLM workspace** — private chat, agent tools, documents, on-device benchmarking, and model tuning.
+**On-device iOS LLM app with TurboQuant KV cache compression.**
 
-> Built on [PocketPal AI](https://github.com/a-ghorbani/pocketpal-ai) and heavily reworked for iOS.  
+LLMm is an iOS app for running large language models locally using Apple Metal. Its main contribution is a port of **TurboQuant** — a WHT-rotation + PolarQuant KV cache compression scheme — directly into the llama.rn/llama.cpp stack that powers on-device inference on iPhone and Mac.
+
+> Built on [PocketPal AI](https://github.com/a-ghorbani/pocketpal-ai) and heavily reworked.  
 > Made by [Dr.Perfidious](https://github.com/drperfidious).
 
 ---
 
-## What is LLMm?
+## TurboQuant KV Cache
 
-LLMm runs large language models entirely on-device using [llama.rn](https://github.com/mybigday/llama.rn) and Apple Metal. Everything stays on your iPhone — no cloud, no telemetry, no subscriptions. On top of the base PocketPal runtime, LLMm adds a full **agent tool layer**, native iOS integrations, and a benchmarking harness for evaluating models on real hardware.
+The KV cache is the main memory bottleneck for long-context inference on device. TurboQuant compresses it using:
 
----
+1. **Walsh-Hadamard Transform (WHT)** rotation — spreads energy across all 128 head-dimension channels before quantization, eliminating outliers that would otherwise require wide quantization bins.
+2. **PolarQuant centroid quantization** — assigns each rotated value to the nearest optimal centroid for the target bit width.
+3. **QJL residual** (1-bit Johnson-Lindenstrauss sign quantization of the residual) for the full TurboQuant formulation.
 
-## Features
+Three precision levels are available as `type_k` / `type_v` options in llama.cpp:
 
-### 🤖 Agent Mode & Talent System
+| Cache type | Bits/val | Compression vs f16 | Notes |
+|------------|----------|--------------------|-------|
+| `turbo2`   | ~2 bit   | ~6.4×              | Aggressive; quality-sensitive models need asymmetric config |
+| `turbo3`   | ~3 bit   | ~4.9×              | Best compression/quality tradeoff for most models |
+| `turbo4`   | ~4 bit   | ~3.8×              | Near-lossless for most models tested |
 
-LLMm extends the base app with a structured **tool/talent** system that lets on-device models interact with your iPhone natively.
+### Benchmark Results (Apple M5 Max, Metal)
 
-| Talent | What it does |
-|--------|-------------|
-| **Web Search** | Brave Search API integration with per-country and safe-search controls |
-| **Workspace Files** | Read, write, search, list, and move files in a sandboxed on-device workspace. PDF text extraction via native PDFKit. |
-| **Workspace Shell** | Run sandboxed shell commands from within the workspace |
-| **Apple Calendar & Reminders** | Search, create, complete, and delete calendar events and reminders via EventKit |
-| **Apple Clock** | Create and cancel AlarmKit-backed timers and alarms (iOS 26+) |
-| **Mail Bridge** | Read and send email via a self-hosted HTTP mail bridge. Supports Gmail and IMAP/SMTP with SSL/STARTTLS |
-| **Custom Instructions** | Per-agent tool definitions |
+**Qwen 3.5 35B-A3B MoE (Q8_0 weights):**
 
-**Keyword routing** — agents automatically activate matching talents based on user message content (e.g. "check my email" routes to Mail Bridge, "set a timer" routes to Clock), without requiring the model to know which tools are available.
+| type_k | type_v | Prompt tok/s | Gen tok/s | KV compression |
+|--------|--------|-------------|-----------|----------------|
+| q8_0   | q8_0   | **225.4**   | **85.0**  | 2.0×           |
+| q4_0   | q4_0   | 221.5       | 84.5      | 4.0×           |
+| turbo4 | turbo4 | 7.1         | 2.4       | 3.8×           |
+| turbo3 | turbo3 | 4.2         | 2.4       | **4.9×**       |
 
-**Robust tool-call parsing** — the agent runner tolerates malformed JSON tool arguments from models, with multi-stage repair using JSON5 and control-character escaping. Duplicate tool calls are detected and short-circuited to prevent loops.
+**Qwen 2.5 7B Q4_K_M (quality-sensitive model, asymmetric K/V):**
 
----
+| type_k | type_v | PPL   | vs q8_0 baseline | V compression |
+|--------|--------|-------|-----------------|---------------|
+| q8_0   | q8_0   | 6.58  | —               | 1.0×          |
+| q8_0   | turbo4 | 6.64  | +1.0%           | 2.0×          |
+| q8_0   | turbo3 | 6.71  | +2.0%           | 2.3×          |
+| q8_0   | turbo2 | 6.91  | +5.1%           | 3.2×          |
 
-### 📱 Native iOS Integrations
+**phi-4 Q8_0:**
 
-New Swift/ObjC modules added on top of the base app:
+| type_k | type_v | PPL  | vs baseline |
+|--------|--------|------|-------------|
+| q8_0   | turbo4 | 4.70 | +0.3%       |
+| q8_0   | turbo3 | 4.74 | +1.1%       |
+| q8_0   | turbo2 | 4.84 | +3.1%       |
+| turbo4 | turbo4 | 4.77 | +1.7%       |
+| turbo3 | turbo3 | 4.89 | +4.2%       |
 
-- **`AppleCalendarModule`** — EventKit calendar + reminder bridge
-- **`AppleClockModule`** — AlarmKit timer/alarm bridge (iOS 26+)
-- **`NativeMailModule`** — Compose and send mail via `MFMailComposeViewController`
-- **`PdfTextExtractor`** — Native PDFKit text extraction with configurable char limits
+**Key finding — K precision dominates quality.** The attention mechanism computes `softmax(Q·K^T)·V`. Errors in K shift attention routing and cascade through softmax; errors in V only affect the weighted sum proportionally. This means:
+- `q8_0` K + `turbo3` V = PPL 6.71 (+2.0%) — rescued
+- `turbo3` K + `q8_0` V = PPL 3556 — catastrophic
 
----
+This is why asymmetric K/V configs (high-precision K, turbo V) are the practical operating point for quality-sensitive or aggressively weight-quantized models.
 
-### ⚡ Metal & Model Tuning
-
-- **Per-model settings** — each model keeps its own load profile (backend, context size, batch size, K/V cache type, flash attention). Changing settings for one model no longer overwrites another.
-- **iOS Metal device selection** — treats `MTLDevice` names (e.g. "Apple A16 GPU") as stable "Metal" markers, applied consistently across Settings and profile loads.
-- **Dynamic Metal batch tuning** — optional mode that raises low batch values on Metal loads for throughput. Off by default.
-- **TurboQuant cache support** — custom `llama.rn` patch adds `Turbo2`/`Turbo3`/`Turbo4` KV cache types. Includes CPU `get-rows` coverage so turbo cache tensors don't abort on fallback paths.
-- **Flash attention safety checks** — validates that flash attention + KV cache type combinations are safe before initiating a load.
-
----
-
-### 🔢 Math Rendering
-
-Chat output now renders LaTeX math without a WebView or MathJax runtime:
-
-- Detects bare LaTeX commands (`\frac`, `\sqrt`, `\sum`, Greek letters, etc.) and display/inline math delimiters
-- Applies Unicode symbol substitutions (α β γ Σ ∫ ⋯ etc.) and readable fraction/root formatting
-- Skips math formatting inside code fences and inline code spans
+**Speed regression note:** The current Metal implementation performs a full 128×128 matrix-vector multiply (WHT rotation) per 4–16 element chunk — O(d²) per block. The optimization path is: threadgroup memory caching → fast Walsh-Hadamard (O(d log d)) → fused flash attention kernel with integrated dequantize.
 
 ---
 
-### 📋 Other Improvements
+## Implementation
 
-- **Explore tab** — search overlay for the Pals/Agents hub with result rows and stale-guard debouncing
-- **Documents screen** — workspace file browser with document previews
-- **Donation / tips** — optional App Store in-app tips via StoreKit (`LLMmTips.storekit`)
-- **Tool trace disclosure** — collapsible trace view for agent tool call chains in chat
-- **Feedback screen** — in-app feedback form with email draft fallback
-- **i18n** — full localization key coverage for all new features
+### llama.rn patch (`patches/llama.rn+0.12.4.patch`)
 
----
+The core TurboQuant work lives in a patch against llama.rn 0.12.4. It adds:
 
-## iOS Benchmarking
+- **New GGML types:** `LM_GGML_TYPE_TURBO2_0`, `TURBO3_0`, `TURBO4_0` — block structs, `static_assert` size checks, `from_float` and `vec_dot` function tables
+- **New op:** `LM_GGML_OP_TURBO_WHT` — the Walsh-Hadamard Transform rotation op, registered in `ggml-backend-meta.cpp` with scalar-only split policy
+- **New source file:** `ggml-turbo-quant.c` — quantization kernels for all three levels, registered in both Android CMake and iOS Xcode build files
+- **`ggml-common.h`:** `block_q2_0` and all three TurboQuant block struct definitions with size assertions
+- **CPU `get-rows` coverage:** Turbo2/3/4 `get-rows` paths in the CPU backend so turbo cache tensors don't abort on fallback paths during benchmarks
+- **`q2_0` base type:** `QK2_0 = 128`, `QI2_0`, `QR2_0` constants; `block_q2_0` struct as the foundation for TurboQuant's 2-bit level
 
-LLMm includes a benchmark harness for evaluating model performance on real iOS hardware.
+This patch is applied by `patch-package` via the `patches/` directory. It is not in upstream llama.rn or llama.cpp.
 
-See [`docs/testflight-alpha.md`](docs/testflight-alpha.md) for the full TestFlight build workflow.
+### App-level integration (`src/`)
 
-**Quick archive:**
-```sh
-DEVELOPER_DIR=/path/to/Xcode-beta.app/Contents/Developer \
-scripts/archive-ios-testflight-xcode27.sh
-```
-
-**With overrides:**
-```sh
-TEAM_ID=XXXXXXXXXX \
-BUNDLE_ID=com.randyduquette.llmm \
-MARKETING_VERSION=0.4.0 \
-BUILD_NUMBER=2026062001 \
-scripts/archive-ios-testflight-xcode27.sh
-```
+- **`src/utils/flashAttnCompatibility.ts`** — `isTurboCacheType()`, `isTurboCachePairSafe()`: validates that flash attention and K/V cache type combinations are safe before initiating a model load. Prevents crashes from illegal Turbo+FlashAttn pairings.
+- **`src/utils/iosMetalPolicy.ts`** — treats `MTLDevice` names (e.g. "Apple A16 GPU") as stable "Metal" markers rather than hardware-specific strings. Metal backend selection, Dynamic Metal batch tuning, and per-device fallback policy.
+- **`src/store/ModelStore.ts`** — per-model settings with Turbo KV cache type persistence. Each model keeps its own load profile (backend, context, batch, K/V cache type, flash attention). The Metal marker is stripped before native init so llama.cpp auto-selects the real Metal device.
 
 ---
 
-## Mail Bridge
+## Asymmetric K/V Discovery
 
-The mail talent connects to a self-hosted **LLMm mail bridge** — a small HTTP server that wraps IMAP/SMTP/Gmail. The agent never connects directly to `imap.gmail.com` or the Gmail REST API; it only talks to the bridge URL you configure (e.g. `http://192.168.1.20:8787`).
+During Metal flash attention kernel work in March 2026, a missing kernel instantiation bug was found that caused NaN outputs for `q8_0`-K + `turbo4`-V configs. Investigation revealed it as the key to practical TurboQuant deployment:
 
-Supported providers: **Gmail**, **IMAP+SMTP** (SSL / STARTTLS / plain), **custom bridge**.
+The asymmetric implementation initially only added turbo×turbo kernel instantiations. When `q8_0`-K + `turbo4`-V was requested, the pipeline name was constructed correctly but no matching kernel existed. The dispatch fell back to an undefined path that happened to produce correct results for `turbo3`-V (lucky fallback) and NaN for `turbo4`-V.
+
+**Fix:** Added 240 new Metal kernel instantiations (90 non-vec + 60 vec for turbo×turbo, plus 90 non-vec + 60 vec for q8_0×turbo in both directions), covering all head dimensions. Pipeline names were migrated to `k{type}_v{type}` format to avoid underscore ambiguity in type names like `q4_0`.
+
+This work is tracked in the `research/turboquant_plus/` directory alongside perplexity results, benchmark scripts, and the full investigation writeup.
+
+---
+
+## iOS App Features
+
+LLMm is a usable app, not just a benchmark harness. On top of the TurboQuant-enabled inference stack:
+
+- **Agent mode** with native iOS tool integrations: Calendar, Reminders, AlarmKit timers (iOS 26+), Mail bridge (Gmail / IMAP+SMTP), on-device workspace files, PDF text extraction, web search (Brave API)
+- **Keyword routing** — agents activate matching tools based on message content without requiring the model to know the tool registry
+- **Math rendering** — LaTeX math in chat output rendered as Unicode without WebView/MathJax
+- **Per-model settings** — each model keeps its own backend, context, batch, K/V cache, and flash attention profile
+- **TestFlight build workflow** — archive + upload script for Xcode 27, see [`docs/testflight-alpha.md`](docs/testflight-alpha.md)
+- **In-app tips** via StoreKit (optional)
+
+---
+
+## Related Research
+
+The `research/` directory (not in this repo) contains:
+
+- **`llama-cpp-turboquant/`** — a full fork of llama.cpp (`feature/turboquant-kv-cache`) with 262+ fork commits, CUDA kernels (turbo2/3/4, warp-cooperative dequant, fused mul_mat_vec), HIP/ROCm support, Metal TQ3-rotated mul_mm, Vulkan KV cache pipelines, and an upstream catch-up merge log
+- **`turboquant_plus/`** — the Python research prototype: PolarQuant codebook construction, QJL implementation, benchmark scripts, perplexity validation against paper bounds, and the asymmetric K/V investigation writeup
 
 ---
 
 ## Building
-
-Requires React Native + the iOS toolchain. Node ≥ 22.21.0 is needed for Yarn package scripts without `YARN_IGNORE_ENGINES=1`.
 
 ```sh
 yarn install
 yarn ios
 ```
 
-For TestFlight / App Store Connect builds, use the archive script above.
+Requires Node ≥ 22.21.0 for Yarn package scripts. The TurboQuant patch is applied automatically by `patch-package` on `yarn install`.
+
+For TestFlight builds:
+
+```sh
+DEVELOPER_DIR=/path/to/Xcode-beta.app/Contents/Developer \
+TEAM_ID=XXXXXXXXXX \
+BUNDLE_ID=com.randyduquette.llmm \
+scripts/archive-ios-testflight-xcode27.sh
+```
 
 ---
 
 ## Based On
 
-LLMm is a fork of [PocketPal AI](https://github.com/a-ghorbani/pocketpal-ai) by [@a-ghorbani](https://github.com/a-ghorbani), released under the [MIT License](LICENSE). The upstream project is unaffiliated with LLMm.
+- [PocketPal AI](https://github.com/a-ghorbani/pocketpal-ai) by [@a-ghorbani](https://github.com/a-ghorbani) — MIT
+- [llama.rn](https://github.com/mybigday/llama.rn) — the React Native llama.cpp bridge
+- TurboQuant algorithm: [_TurboQuant: Optimal Rotated Quantization for KV Cache_](https://arxiv.org/abs/2501.06750) (Yao et al., 2025)
 
 ---
 
